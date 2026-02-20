@@ -1,0 +1,17 @@
+{
+  "database": {
+    "host": "localhost",
+    "port": 5432,
+    "username": "admin",
+    "password": "secret123",
+    "api_key": "abc123xyz789"
+  },
+  "security": {
+    "secret": "dont-commit-this-secret",
+    "encryption_key": "base64encodedkey=="
+  },
+  "features": {
+    "debug_mode": true,
+    "logging": "verbose"
+  }
+}

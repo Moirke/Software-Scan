@@ -1,0 +1,15 @@
+# Repository Scanner Configuration File
+# Specify the path to a file containing prohibited words (one per line)
+prohibited_words_file: config/prohibited_words.txt
+
+# Or specify prohibited words directly in the config
+# prohibited_words:
+#   - password
+#   - secret
+#   - api_key
+
+# Case sensitivity for word matching
+case_sensitive: false
+
+# Maximum file size to scan in megabytes (files larger than this will be skipped)
+max_file_size_mb: 10

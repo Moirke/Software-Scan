@@ -1,0 +1,22 @@
+# Prohibited Words List
+# One word per line
+# Lines starting with # are comments
+
+# Security-related
+password
+secret
+api_key
+private_key
+access_token
+credential
+
+# Development markers
+TODO
+FIXME
+HACK
+XXX
+DELETEME
+
+# Sensitive data patterns
+ssn
+credit_card

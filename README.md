@@ -1,0 +1,297 @@
+# Repository Scanner - Prohibited Words Detector
+
+A comprehensive tool to scan code repositories for prohibited words, with support for compressed archives (ZIP, TAR, RPM, Docker images) and both CLI and web interfaces.
+
+## Features
+
+- 🔍 **Deep Scanning**: Searches through code repositories including nested directories
+- 📦 **Archive Support**: Automatically extracts and scans:
+  - ZIP files (.zip)
+  - TAR archives (.tar, .tar.gz, .tgz, .tar.bz2, .tar.xz)
+  - RPM packages (.rpm)
+  - Docker images (tar format)
+- 💻 **Dual Interface**: Command-line tool and web-based UI
+- ⚙️ **Configurable**: Simple YAML/JSON configuration files
+- 🎯 **Word Boundary Matching**: Finds whole words only (avoids false positives)
+- 🚀 **Performance**: Skips binary files and supports file size limits
+
+## Installation
+
+### Prerequisites
+
+- Python 3.8 or higher
+- For RPM support: `rpm2cpio` and `cpio` utilities
+
+### Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+On Ubuntu/Debian, install RPM tools:
+```bash
+sudo apt-get install rpm2cpio cpio
+```
+
+## Configuration
+
+### Config File Format (YAML)
+
+```yaml
+# prohibited_words.txt path or inline list
+prohibited_words_file: config/prohibited_words.txt
+
+# Alternative: specify words directly
+# prohibited_words:
+#   - password
+#   - secret
+
+# Case sensitivity
+case_sensitive: false
+
+# Max file size to scan (in MB)
+max_file_size_mb: 10
+```
+
+### Prohibited Words File
+
+Create a text file with one word per line:
+
+```
+# prohibited_words.txt
+password
+secret
+api_key
+TODO
+FIXME
+```
+
+Lines starting with `#` are treated as comments.
+
+## Usage
+
+### Command Line Interface
+
+Basic usage:
+```bash
+python run-cli.py --config config/config.yaml --repo /path/to/repository
+```
+
+Save results to file:
+```bash
+python run-cli.py -c config/config.yaml -r /path/to/repo -o results.txt
+```
+
+Scan only top-level directory (no recursion):
+```bash
+python run-cli.py -c config/config.yaml -r /path/to/repo --no-recursive
+```
+
+Verbose output:
+```bash
+python run-cli.py -c config/config.yaml -r /path/to/repo --verbose
+```
+
+**Exit Codes:**
+- `0`: No violations found
+- `1`: Violations found
+- `2`: Error occurred
+
+### Web Interface
+
+Start the web server:
+```bash
+python run-web.py
+```
+
+Then open your browser to: `http://localhost:5000`
+
+The web interface provides:
+- Interactive configuration editor
+- Real-time scanning progress
+- Visual results display
+- Export functionality
+- Scan history
+
+## How It Works
+
+1. **Configuration Loading**: Reads prohibited words from config file
+2. **Directory Traversal**: Walks through the repository recursively
+3. **Archive Detection**: Identifies compressed files by extension
+4. **Automatic Extraction**: Extracts archives to temporary directories
+5. **Content Scanning**: Searches text files for prohibited words using word boundary matching
+6. **Results Collection**: Aggregates all violations with file paths and line numbers
+7. **Cleanup**: Removes temporary extraction directories
+
+## Archive Support Details
+
+### Supported Formats
+
+| Format | Extensions | Notes |
+|--------|-----------|-------|
+| ZIP | .zip | Full support |
+| TAR | .tar, .tar.gz, .tgz, .tar.bz2, .tar.xz | All compression methods |
+| RPM | .rpm | Requires rpm2cpio and cpio |
+| Docker Images | .tar (with "docker" in name) | Extracts all layers |
+
+### Docker Image Scanning
+
+Docker images saved as TAR files are automatically detected and all layers are extracted and scanned.
+
+Example:
+```bash
+# Save a Docker image
+docker save myimage:latest -o myimage.tar
+
+# Scan it
+python run-cli.py -c config/config.yaml -r myimage.tar
+```
+
+## Examples
+
+### Example 1: Scan a Git Repository
+
+```bash
+python run-cli.py \
+  --config config/config.yaml \
+  --repo /home/user/projects/myapp \
+  --output scan_results.txt \
+  --verbose
+```
+
+### Example 2: Scan a ZIP Archive
+
+```bash
+python run-cli.py -c config/config.yaml -r archive.zip
+```
+
+### Example 3: Custom Configuration
+
+Create `custom_config.yaml`:
+```yaml
+prohibited_words:
+  - hardcoded_password
+  - admin123
+  - test_key
+case_sensitive: true
+max_file_size_mb: 5
+```
+
+Run scan:
+```bash
+python run-cli.py -c config/custom_config.yaml -r /path/to/code
+```
+
+### Example 4: JSON Configuration
+
+Create `config.json`:
+```json
+{
+  "prohibited_words_file": "words.txt",
+  "case_sensitive": false,
+  "max_file_size_mb": 10
+}
+```
+
+## Output Format
+
+### CLI Output
+
+```
+================================================================================
+SCAN RESULTS: Found 3 violation(s)
+================================================================================
+
+File: /path/to/file.py
+Violations: 2
+--------------------------------------------------------------------------------
+  Line 15: Found 'password'
+    db_password = "secret123"
+
+  Line 42: Found 'TODO'
+    # TODO: Fix this later
+
+File: /path/to/config.json
+Violations: 1
+--------------------------------------------------------------------------------
+  Line 8: Found 'api_key'
+    "api_key": "abc123xyz"
+```
+
+### Web UI
+
+The web interface displays:
+- Total violation count
+- Violations grouped by file
+- Line numbers and content
+- Highlighted prohibited words
+- Export to JSON functionality
+
+## Advanced Usage
+
+### Integrating with CI/CD
+
+Use the CLI in your CI pipeline:
+
+```bash
+#!/bin/bash
+python run-cli.py -c config/config.yaml -r .
+if [ $? -eq 1 ]; then
+  echo "Prohibited words found! Build failed."
+  exit 1
+fi
+```
+
+### Custom File Extensions
+
+The scanner automatically skips binary files based on:
+- File extension (exe, dll, so, jpg, png, etc.)
+- Content detection (presence of null bytes)
+
+### Performance Tuning
+
+For large repositories:
+- Adjust `max_file_size_mb` to skip large files
+- Use `--no-recursive` to scan only top-level
+- Configure `.gitignore`-style exclusions in your scanning workflow
+
+## Limitations
+
+- Binary files are skipped (cannot search within compiled code)
+- Very large files (> configured limit) are skipped
+- Encrypted archives cannot be extracted
+- Some proprietary archive formats may not be supported
+
+## Troubleshooting
+
+### RPM extraction fails
+Install required tools:
+```bash
+sudo apt-get install rpm2cpio cpio
+```
+
+### Memory issues with large repositories
+Reduce `max_file_size_mb` or scan subdirectories separately.
+
+### Web UI not accessible
+Check firewall settings and ensure port 5000 is open.
+
+## Security Considerations
+
+- Temporary files are created during archive extraction
+- Ensure adequate disk space for large archives
+- Temporary directories are cleaned up after scanning
+- In production, consider using a database for scan history instead of in-memory storage
+
+## License
+
+MIT License - feel free to use and modify as needed.
+
+## Contributing
+
+Contributions welcome! Areas for enhancement:
+- Additional archive format support
+- Regex pattern matching for prohibited words
+- Database backend for web interface
+- REST API expansion
+- Performance optimizations

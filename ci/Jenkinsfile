@@ -1,0 +1,101 @@
+pipeline {
+    agent any
+    
+    environment {
+        SCANNER_CONFIG = 'config/config.yaml'
+        SCAN_TARGET = '.'  // Scan the current workspace
+        RESULTS_FILE = 'scan_results.txt'
+    }
+    
+    stages {
+        stage('Setup Scanner') {
+            steps {
+                script {
+                    echo 'Setting up Repository Scanner...'
+                    sh '''
+                        # Install dependencies if not already installed
+                        pip3 install -r requirements.txt --break-system-packages || true
+                        chmod +x run-cli.py src/cli.py
+                    '''
+                }
+            }
+        }
+        
+        stage('Scan for Prohibited Words') {
+            steps {
+                script {
+                    echo 'Scanning repository for prohibited words...'
+                    // Run scan and capture exit code
+                    def scanResult = sh(
+                        script: "./run-cli.py -c ${SCANNER_CONFIG} -r ${SCAN_TARGET} -o ${RESULTS_FILE} -v",
+                        returnStatus: true
+                    )
+                    
+                    // Store exit code for later stages
+                    env.SCAN_EXIT_CODE = scanResult
+                    
+                    echo "Scan completed with exit code: ${scanResult}"
+                }
+            }
+        }
+        
+        stage('Archive Results') {
+            steps {
+                script {
+                    // Always archive results, even if scan found violations
+                    archiveArtifacts artifacts: "${RESULTS_FILE}", allowEmptyArchive: true
+                    
+                    // Read and display results
+                    if (fileExists(RESULTS_FILE)) {
+                        def results = readFile(RESULTS_FILE)
+                        echo "Scan Results:\n${results}"
+                    }
+                }
+            }
+        }
+        
+        stage('Evaluate Results') {
+            steps {
+                script {
+                    if (env.SCAN_EXIT_CODE == '1') {
+                        error('Prohibited words found! Check scan results for details.')
+                    } else if (env.SCAN_EXIT_CODE == '0') {
+                        echo '✓ No prohibited words found!'
+                    } else {
+                        error('Scanner encountered an error!')
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            // Clean up
+            cleanWs(
+                deleteDirs: true,
+                patterns: [[pattern: 'scan_results.txt', type: 'INCLUDE']]
+            )
+        }
+        
+        failure {
+            emailext(
+                subject: "Build Failed: Prohibited Words Detected - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body: """
+                    Build: ${env.JOB_NAME} #${env.BUILD_NUMBER}
+                    Status: FAILED - Prohibited words detected
+                    
+                    Check the build artifacts for detailed scan results.
+                    
+                    Build URL: ${env.BUILD_URL}
+                """,
+                to: '${DEFAULT_RECIPIENTS}',
+                attachLog: true
+            )
+        }
+        
+        success {
+            echo 'Build passed - No prohibited words found!'
+        }
+    }
+}
