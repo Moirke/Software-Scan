@@ -1,0 +1,50 @@
+# systemd service unit for Repository Scanner (Gunicorn)
+#
+# Install:
+#   sudo cp deploy/scanner.service /etc/systemd/system/scanner.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now scanner
+#
+# Logs:
+#   journalctl -u scanner -f
+
+[Unit]
+Description=Repository Scanner (Gunicorn)
+After=network.target
+
+[Service]
+Type=notify
+
+# ── Run as a dedicated non-root user ────────────────────────────────────────
+User=scanner
+Group=scanner
+WorkingDirectory=/opt/scanner
+
+# ── Environment ─────────────────────────────────────────────────────────────
+Environment="PATH=/opt/scanner/venv/bin"
+# Set FLASK_DEBUG=true only for local troubleshooting — never in production
+Environment="FLASK_DEBUG=false"
+# Optional: override the bind port
+# Environment="PORT=5000"
+
+# ── Start / stop ─────────────────────────────────────────────────────────────
+# Worker count: (2 x nproc) + 1  — adjust to your server's CPU count
+ExecStart=/opt/scanner/venv/bin/gunicorn \
+    --workers 4 \
+    --worker-class gthread \
+    --threads 2 \
+    --timeout 600 \
+    --bind 127.0.0.1:5000 \
+    --access-logfile /var/log/scanner/access.log \
+    --error-logfile  /var/log/scanner/error.log \
+    wsgi:app
+
+ExecReload=/bin/kill -s HUP $MAINPID
+KillMode=mixed
+TimeoutStopSec=5
+PrivateTmp=true
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

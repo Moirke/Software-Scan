@@ -3,9 +3,11 @@ Web Interface for Repository Scanner
 """
 from flask import Flask, render_template, request, jsonify, send_file
 import base64
+import ipaddress
 import os
 import json
 import shutil
+import socket
 import subprocess
 import yaml
 import requests
@@ -18,9 +20,42 @@ from datetime import datetime
 template_folder = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'templates')
 app = Flask(__name__, template_folder=template_folder)
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB max upload
+app.config['DEBUG'] = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
 
 # Store scan results in memory (in production, use a database)
 scan_history = []
+
+
+# ── SSRF protection ───────────────────────────────────────────────────────
+
+def _check_ssrf(url):
+    """
+    Resolve the URL's hostname and raise ValueError if any resolved address
+    is private, loopback, link-local, or otherwise non-routable.
+    Protects against SSRF attacks that probe internal services.
+    """
+    parsed = urlparse(url)
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("Could not parse a hostname from the URL.")
+
+    try:
+        results = socket.getaddrinfo(hostname, None)
+    except socket.gaierror as e:
+        raise ValueError(f"Could not resolve hostname '{hostname}': {e}")
+
+    for result in results:
+        raw_addr = result[4][0]
+        try:
+            ip = ipaddress.ip_address(raw_addr)
+        except ValueError:
+            continue
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+            raise ValueError(
+                f"Requests to private or internal addresses are not allowed "
+                f"('{hostname}' resolved to {raw_addr})."
+            )
 
 
 # ── Artifactory helpers ────────────────────────────────────────────────────
@@ -166,6 +201,7 @@ def scan():
 
         # ── Fetch source ─────────────────────────────────────────────
         if source_type == 'artifactory':
+            _check_ssrf(repo_url)
             auth_headers = _artifactory_headers(art_api_key, art_username, art_password)
             _scan_from_artifactory(repo_url, auth_headers, work_dir, max_file_size_bytes)
 
@@ -175,6 +211,8 @@ def scan():
                 return jsonify({
                     'error': 'Invalid repository URL — must be http, https, git, or ssh'
                 }), 400
+            if parsed.scheme in ('http', 'https'):
+                _check_ssrf(repo_url)
 
             result = subprocess.run(
                 ['git', 'clone', '--depth=1', repo_url, work_dir],
@@ -275,4 +313,4 @@ def export_scan(scan_id):
 
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=app.config['DEBUG'], host='0.0.0.0', port=5000)
