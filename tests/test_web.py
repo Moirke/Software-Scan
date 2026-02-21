@@ -493,6 +493,91 @@ class TestPartialMatchWeb(WebTestCase):
 # PDF report export
 # ══════════════════════════════════════════════════════════════════════════════
 
+class TestMetrics(WebTestCase):
+
+    def setUp(self):
+        super().setUp()
+        # Reset all metric counters between tests
+        import src.metrics as m
+        with m._lock:
+            m._page_views      = 0
+            m._scans_started   = 0
+            m._scans_completed = 0
+            m._scans_failed    = 0
+            m._total_violations = 0
+            m._source_counts.clear()
+            m._scans_by_date.clear()
+            m._durations_ms.clear()
+
+    def test_metrics_endpoint_returns_200(self):
+        r = self.client.get('/api/metrics')
+        self.assertEqual(r.status_code, 200)
+
+    def test_metrics_response_has_required_fields(self):
+        r = self.client.get('/api/metrics')
+        data = r.get_json()
+        for field in ('page_views', 'scans_today', 'scans_started',
+                      'scans_completed', 'scans_failed', 'success_rate_pct',
+                      'avg_scan_duration_ms', 'total_violations_found',
+                      'source_type_counts', 'scans_last_7_days', 'server_start'):
+            self.assertIn(field, data, msg=f'Missing metrics field: {field}')
+
+    def test_page_view_increments_on_index(self):
+        self.client.get('/')
+        self.client.get('/')
+        data = self.client.get('/api/metrics').get_json()
+        self.assertEqual(data['page_views'], 2)
+
+    def test_scan_increments_started_and_completed(self):
+        self._scan_zip(_make_zip({'f.py': DIRTY_PY}))
+        data = self.client.get('/api/metrics').get_json()
+        self.assertEqual(data['scans_started'],  1)
+        self.assertEqual(data['scans_completed'], 1)
+        self.assertEqual(data['scans_failed'],    0)
+
+    def test_scans_today_increments(self):
+        self._scan_zip(_make_zip({'f.py': CLEAN_PY}))
+        self._scan_zip(_make_zip({'f.py': DIRTY_PY}))
+        data = self.client.get('/api/metrics').get_json()
+        self.assertEqual(data['scans_today'], 2)
+
+    def test_violations_counted(self):
+        self._scan_zip(_make_zip({'f.py': DIRTY_PY}))
+        data = self.client.get('/api/metrics').get_json()
+        self.assertGreater(data['total_violations_found'], 0)
+
+    def test_source_type_counted(self):
+        self._scan_zip(_make_zip({'f.py': CLEAN_PY}))
+        data = self.client.get('/api/metrics').get_json()
+        self.assertEqual(data['source_type_counts'].get('zip', 0), 1)
+
+    def test_avg_duration_present_after_scan(self):
+        self._scan_zip(_make_zip({'f.py': CLEAN_PY}))
+        data = self.client.get('/api/metrics').get_json()
+        self.assertGreaterEqual(data['avg_scan_duration_ms'], 0)
+
+    def test_success_rate_100_when_all_succeed(self):
+        self._scan_zip(_make_zip({'f.py': CLEAN_PY}))
+        self._scan_zip(_make_zip({'f.py': DIRTY_PY}))
+        data = self.client.get('/api/metrics').get_json()
+        self.assertEqual(data['success_rate_pct'], 100.0)
+
+    def test_validation_errors_do_not_increment_started(self):
+        # Missing zip file — fails validation before scan starts
+        self.client.post('/api/scan', data={
+            'source_type':           'zip',
+            'config_source_type':    'upload',
+            'prohibited_words_file': (io.BytesIO(WORDS_FILE_BYTES), 'w.txt'),
+        }, content_type='multipart/form-data')
+        data = self.client.get('/api/metrics').get_json()
+        self.assertEqual(data['scans_started'], 0)
+
+    def test_scans_last_7_days_populated(self):
+        self._scan_zip(_make_zip({'f.py': CLEAN_PY}))
+        data = self.client.get('/api/metrics').get_json()
+        self.assertGreater(len(data['scans_last_7_days']), 0)
+
+
 class TestPdfExport(WebTestCase):
 
     def test_pdf_endpoint_returns_200(self):

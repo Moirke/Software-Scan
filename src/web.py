@@ -15,7 +15,9 @@ import requests
 from urllib.parse import urlparse
 from src.scanner import ProhibitedWordScanner
 from src.report import generate_pdf
+import src.metrics as metrics
 import tempfile
+import time
 from datetime import datetime
 
 # Calculate template folder relative to project root
@@ -258,16 +260,19 @@ def health():
 @app.route('/')
 def index():
     """Render main page"""
+    metrics.record_page_view()
     return render_template('index.html')
 
 
 @app.route('/api/scan', methods=['POST'])
 def scan():
     """Perform a scan — git repo, Artifactory path, or uploaded ZIP."""
-    work_dir        = None
-    words_path      = None
-    words_is_server = False   # server_path words file belongs to the server — don't delete
-    config_path     = None
+    work_dir             = None
+    words_path           = None
+    words_is_server      = False
+    config_path          = None
+    scan_recorded        = False   # True once we've passed validation
+    scan_start           = time.monotonic()
     try:
         # ── Collect form fields ───────────────────────────────────────
         source_type        = request.form.get('source_type', 'git')
@@ -303,6 +308,10 @@ def scan():
             return jsonify({'error': 'No server path provided for config'}), 400
         if config_source_type == 'git_repo' and not cfg_git_url:
             return jsonify({'error': 'No git URL provided for config'}), 400
+
+        # ── Past validation — record that a real scan is starting ─────
+        metrics.record_scan_started(source_type)
+        scan_recorded = True
 
         # ── Detect same-repo (clone once, exclude config path) ────────
         same_repo = (
@@ -387,6 +396,9 @@ def scan():
         }
         scan_history.append(scan_record)
 
+        duration_ms = int((time.monotonic() - scan_start) * 1000)
+        metrics.record_scan_completed(duration_ms, len(results))
+
         return jsonify({
             'success':            True,
             'scan_id':            scan_record['id'],
@@ -398,8 +410,12 @@ def scan():
         })
 
     except ValueError as e:
+        if scan_recorded:
+            metrics.record_scan_failed()
         return jsonify({'error': str(e)}), 400
     except Exception as e:
+        if scan_recorded:
+            metrics.record_scan_failed()
         return jsonify({'error': str(e)}), 500
     finally:
         if work_dir:
@@ -446,6 +462,18 @@ def export_scan(scan_id):
         as_attachment=True,
         download_name=f"scan_results_{scan_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     )
+
+
+@app.route('/api/metrics')
+def get_metrics():
+    """
+    Current usage metrics for this process instance.
+
+    Values reset on restart and are scoped to a single worker process.
+    In a multi-instance deployment, scrape each instance separately and
+    aggregate in your monitoring stack.
+    """
+    return jsonify(metrics.get_snapshot())
 
 
 @app.route('/api/export/<int:scan_id>/pdf')

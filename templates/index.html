@@ -451,6 +451,43 @@
 
         .results-heading { font-size: 1rem; font-weight: 700; color: var(--text); margin-bottom: 14px; }
 
+        /* ── Metrics panel ──────────────────────────────────────────── */
+        .metrics-scope {
+            font-size: 0.7rem; font-weight: 400; letter-spacing: 0.04em;
+            color: var(--text-subtle); background: var(--surface-alt);
+            border: 1px solid var(--border); border-radius: 999px;
+            padding: 1px 7px; margin-left: 8px; vertical-align: middle;
+        }
+        .metrics-updated { font-size: 0.75rem; color: var(--text-subtle); }
+
+        .metrics-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+
+        .metric-chip {
+            flex: 1; min-width: 100px;
+            background: var(--surface-alt);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 10px 14px;
+            text-align: center;
+        }
+        .metric-chip-num   { font-size: 1.6rem; font-weight: 700; color: var(--stat-num); line-height: 1.1; }
+        .metric-chip-label { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-subtle); margin-top: 3px; }
+
+        .metrics-detail { display: flex; gap: 24px; flex-wrap: wrap; font-size: 0.82rem; color: var(--text-muted); }
+        .metrics-detail span { white-space: nowrap; }
+        .metrics-detail strong { color: var(--text); }
+
+        .metrics-bar { margin-top: 12px; }
+        .metrics-bar-label { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-subtle); margin-bottom: 6px; }
+        .day-rows { display: flex; flex-direction: column; gap: 3px; }
+        .day-row  { display: flex; align-items: center; gap: 8px; font-size: 0.78rem; }
+        .day-date { color: var(--text-subtle); min-width: 80px; }
+        .day-bar-wrap { flex: 1; background: var(--surface-alt); border-radius: 999px; height: 8px; overflow: hidden; }
+        .day-bar      { height: 100%; background: var(--accent); border-radius: 999px; transition: width 0.4s ease; min-width: 2px; }
+        .day-count    { color: var(--text-muted); min-width: 24px; text-align: right; }
+
+        .metrics-loading { color: var(--text-subtle); font-size: 0.85rem; padding: 8px 0; }
+
         @media (max-width: 540px) {
             .header { flex-direction: column; align-items: flex-start; gap: 12px; }
             .page   { padding: 20px 14px 40px; }
@@ -630,6 +667,19 @@
                target="_blank" rel="noopener">
                 ↓ Download PDF Report
             </a>
+        </div>
+    </div>
+
+    <!-- Live metrics panel -->
+    <div class="card" id="metricsCard">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+            <div class="card-title" style="margin-bottom:0">Live statistics
+                <span class="metrics-scope">this instance</span>
+            </div>
+            <span class="metrics-updated" id="metricsUpdated"></span>
+        </div>
+        <div id="metricsBody">
+            <div class="metrics-loading">Loading…</div>
         </div>
     </div>
 
@@ -913,6 +963,75 @@
     document.getElementById('repo_url').addEventListener('keydown', e => {
         if (e.key === 'Enter') runScan();
     });
+
+    /* ── Live metrics ───────────────────────────────────────────────── */
+    async function loadMetrics() {
+        try {
+            const data = await fetch('/api/metrics').then(r => r.json());
+            renderMetrics(data);
+            document.getElementById('metricsUpdated').textContent =
+                'Updated ' + new Date().toLocaleTimeString();
+        } catch (_) {
+            // Silently skip — metrics are non-critical
+        }
+    }
+
+    function renderMetrics(d) {
+        const src   = d.source_type_counts || {};
+        const days  = d.scans_last_7_days  || {};
+        const maxDay = Math.max(1, ...Object.values(days));
+
+        const durSec = d.avg_scan_duration_ms >= 1000
+            ? (d.avg_scan_duration_ms / 1000).toFixed(1) + ' s'
+            : d.avg_scan_duration_ms + ' ms';
+
+        const srcParts = ['git', 'artifactory', 'zip']
+            .filter(k => (src[k] || 0) > 0)
+            .map(k => `<strong>${src[k]}</strong> ${k}`)
+            .join('  ·  ') || '<em>none yet</em>';
+
+        const dayRows = Object.entries(days).reverse().map(([dt, n]) => `
+            <div class="day-row">
+                <span class="day-date">${dt}</span>
+                <div class="day-bar-wrap">
+                    <div class="day-bar" style="width:${Math.round(n / maxDay * 100)}%"></div>
+                </div>
+                <span class="day-count">${n}</span>
+            </div>`).join('');
+
+        document.getElementById('metricsBody').innerHTML = `
+            <div class="metrics-row">
+                ${metricChip(d.page_views,    'Page views')}
+                ${metricChip(d.scans_today,   'Scans today')}
+                ${metricChip(d.scans_started, 'Total scans')}
+                ${metricChip(d.success_rate_pct + '%', 'Success rate')}
+            </div>
+            <div class="metrics-detail">
+                <span>Avg scan time: <strong>${durSec}</strong></span>
+                <span>Violations found: <strong>${d.total_violations_found}</strong></span>
+                <span>By source: ${srcParts}</span>
+            </div>
+            ${dayRows ? `
+            <div class="metrics-bar">
+                <div class="metrics-bar-label">Scans per day</div>
+                <div class="day-rows">${dayRows}</div>
+            </div>` : ''}`;
+    }
+
+    function metricChip(value, label) {
+        return `<div class="metric-chip">
+            <div class="metric-chip-num">${value}</div>
+            <div class="metric-chip-label">${label}</div>
+        </div>`;
+    }
+
+    // Load immediately then refresh every 30 s
+    loadMetrics();
+    setInterval(loadMetrics, 30000);
+
+    // Refresh after each scan so the numbers update right away
+    const _origSetResults = setResults;
+    setResults = html => { _origSetResults(html); loadMetrics(); };
 </script>
 </body>
 </html>
