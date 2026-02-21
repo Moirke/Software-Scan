@@ -3,6 +3,7 @@ Web Interface for Repository Scanner
 """
 from flask import Flask, render_template, request, jsonify, send_file
 import base64
+import io
 import ipaddress
 import os
 import json
@@ -13,6 +14,7 @@ import yaml
 import requests
 from urllib.parse import urlparse
 from src.scanner import ProhibitedWordScanner
+from src.report import generate_pdf
 import tempfile
 from datetime import datetime
 
@@ -364,20 +366,24 @@ def scan():
 
         scanner = ProhibitedWordScanner(config_path)
         results  = scanner.scan_directory(work_dir, recursive=True)
+        words_evaluated = list(scanner.prohibited_words)
         scanner.cleanup()
 
         exact_count   = sum(1 for r in results if r.get('match_type') == 'exact')
         partial_count = sum(1 for r in results if r.get('match_type') == 'partial')
 
         scan_record = {
-            'id':                len(scan_history),
-            'timestamp':         datetime.now().isoformat(),
-            'repo_path':         scan_label,
-            'source_type':       source_type,
-            'total_violations':  len(results),
-            'exact_violations':  exact_count,
+            'id':                 len(scan_history),
+            'timestamp':          datetime.now().isoformat(),
+            'repo_path':          scan_label,
+            'source_type':        source_type,
+            'case_sensitive':     case_sensitive,
+            'max_file_size_mb':   max_file_size_mb,
+            'words_evaluated':    words_evaluated,
+            'total_violations':   len(results),
+            'exact_violations':   exact_count,
             'partial_violations': partial_count,
-            'results':           results,
+            'results':            results,
         }
         scan_history.append(scan_record)
 
@@ -439,6 +445,23 @@ def export_scan(scan_id):
         temp_path,
         as_attachment=True,
         download_name=f"scan_results_{scan_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    )
+
+
+@app.route('/api/export/<int:scan_id>/pdf')
+def export_scan_pdf(scan_id):
+    """Export scan results as a formatted PDF report."""
+    if scan_id >= len(scan_history):
+        return jsonify({'error': 'Scan not found'}), 404
+
+    pdf_bytes = generate_pdf(scan_history[scan_id])
+    filename  = f"scan_report_{scan_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+
+    return send_file(
+        io.BytesIO(pdf_bytes),
+        mimetype='application/pdf',
+        as_attachment=True,
+        download_name=filename,
     )
 
 

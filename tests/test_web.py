@@ -489,5 +489,114 @@ class TestPartialMatchWeb(WebTestCase):
             self.assertIn('match_type', result)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# PDF report export
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestPdfExport(WebTestCase):
+
+    def test_pdf_endpoint_returns_200(self):
+        r = self._scan_zip(_make_zip({'f.py': DIRTY_PY}))
+        scan_id = r.get_json()['scan_id']
+        pdf_r = self.client.get(f'/api/export/{scan_id}/pdf')
+        self.assertEqual(pdf_r.status_code, 200)
+
+    def test_pdf_content_type(self):
+        r = self._scan_zip(_make_zip({'f.py': DIRTY_PY}))
+        scan_id = r.get_json()['scan_id']
+        pdf_r = self.client.get(f'/api/export/{scan_id}/pdf')
+        self.assertIn('application/pdf', pdf_r.content_type)
+
+    def test_pdf_bytes_start_with_magic(self):
+        r = self._scan_zip(_make_zip({'f.py': DIRTY_PY}))
+        scan_id = r.get_json()['scan_id']
+        pdf_r = self.client.get(f'/api/export/{scan_id}/pdf')
+        self.assertTrue(pdf_r.data.startswith(b'%PDF'),
+                        'Response does not look like a PDF')
+
+    def test_pdf_for_clean_repo(self):
+        """A clean scan should also produce a valid PDF."""
+        r = self._scan_zip(_make_zip({'f.py': CLEAN_PY}))
+        scan_id = r.get_json()['scan_id']
+        pdf_r = self.client.get(f'/api/export/{scan_id}/pdf')
+        self.assertEqual(pdf_r.status_code, 200)
+        self.assertTrue(pdf_r.data.startswith(b'%PDF'))
+
+    def test_pdf_404_for_invalid_scan(self):
+        pdf_r = self.client.get('/api/export/99999/pdf')
+        self.assertEqual(pdf_r.status_code, 404)
+
+    def test_generate_pdf_with_violations(self):
+        from src.report import generate_pdf
+        record = {
+            'id': 0,
+            'timestamp': '2026-02-21T12:00:00',
+            'repo_path': 'https://github.com/test/repo',
+            'source_type': 'git',
+            'case_sensitive': False,
+            'max_file_size_mb': 10,
+            'words_evaluated': ['password', 'secret'],
+            'total_violations': 2,
+            'exact_violations': 1,
+            'partial_violations': 1,
+            'results': [
+                {
+                    'file': '/tmp/repo/app.py',
+                    'line_number': 5,
+                    'line_content': 'password = "hunter2"',
+                    'prohibited_word': 'password',
+                    'position': 0,
+                    'match_type': 'exact',
+                },
+                {
+                    'file': '/tmp/repo/config.py',
+                    'line_number': 12,
+                    'line_content': 'passwordmanager = "x"',
+                    'prohibited_word': 'password',
+                    'position': 0,
+                    'match_type': 'partial',
+                },
+            ],
+        }
+        pdf_bytes = generate_pdf(record)
+        self.assertIsInstance(pdf_bytes, bytes)
+        self.assertTrue(pdf_bytes.startswith(b'%PDF'))
+
+    def test_generate_pdf_with_no_violations(self):
+        from src.report import generate_pdf
+        record = {
+            'id': 1,
+            'timestamp': '2026-02-21T12:00:00',
+            'repo_path': 'https://github.com/test/repo',
+            'source_type': 'zip',
+            'case_sensitive': False,
+            'max_file_size_mb': 10,
+            'words_evaluated': ['password', 'secret'],
+            'total_violations': 0,
+            'exact_violations': 0,
+            'partial_violations': 0,
+            'results': [],
+        }
+        pdf_bytes = generate_pdf(record)
+        self.assertIsInstance(pdf_bytes, bytes)
+        self.assertTrue(pdf_bytes.startswith(b'%PDF'))
+
+    def test_scan_record_includes_words_evaluated(self):
+        """words_evaluated must be stored in the scan record for the PDF report."""
+        r = self._scan_zip(_make_zip({'f.py': DIRTY_PY}))
+        scan_id = r.get_json()['scan_id']
+        detail = self.client.get(f'/api/scan/{scan_id}').get_json()
+        self.assertIn('words_evaluated', detail)
+        self.assertIsInstance(detail['words_evaluated'], list)
+        self.assertGreater(len(detail['words_evaluated']), 0)
+
+    def test_scan_record_includes_case_sensitive_and_file_size(self):
+        r = self._scan_zip(_make_zip({'f.py': DIRTY_PY}))
+        scan_id = r.get_json()['scan_id']
+        detail = self.client.get(f'/api/scan/{scan_id}').get_json()
+        self.assertIn('case_sensitive',   detail)
+        self.assertIn('max_file_size_mb', detail)
+
+
 if __name__ == '__main__':
     unittest.main()

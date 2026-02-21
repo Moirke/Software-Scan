@@ -20,6 +20,7 @@ Complete list of all dependencies across the project — runtime, system, infras
 | PyYAML | 6.0.1 | Config file parsing (YAML format) |
 | requests | 2.31.0 | Artifactory HTTP downloads |
 | gunicorn | 21.2.0 | Production WSGI server |
+| fpdf2 | 2.7.9 | PDF report generation (pure Python, no system deps) |
 
 All other modules used (`os`, `re`, `zipfile`, `tarfile`, `subprocess`, `ipaddress`, `socket`, `tempfile`, `shutil`, `json`, `base64`, `io`, `pathlib`, `multiprocessing`) are Python standard library — no installation required.
 

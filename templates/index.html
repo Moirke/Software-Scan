@@ -361,7 +361,9 @@
         .toggle-wrap input:checked + .toggle-track::after { transform: translateX(16px); }
         .toggle-label { font-size: 0.875rem; font-weight: 500; color: var(--text-muted); user-select: none; }
 
-        /* ── Scan button ────────────────────────────────────────────── */
+        /* ── Buttons ────────────────────────────────────────────────── */
+        .btn-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; align-items: center; }
+
         .btn-scan {
             display: inline-flex;
             align-items: center;
@@ -382,6 +384,25 @@
         .btn-scan:hover   { background: var(--accent-hover); transform: translateY(-1px); box-shadow: 0 5px 18px var(--accent-glow); }
         .btn-scan:active  { transform: translateY(0); }
         .btn-scan:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
+
+        .btn-outline {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: transparent;
+            color: var(--accent);
+            border: 1px solid var(--accent);
+            border-radius: var(--radius);
+            padding: 9px 20px;
+            font-size: 0.875rem;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+            transition: background var(--transition), color var(--transition),
+                        box-shadow var(--transition);
+            box-shadow: var(--shadow-sm);
+        }
+        .btn-outline:hover { background: var(--accent); color: white; box-shadow: 0 3px 10px var(--accent-glow); }
 
         /* ── Results ────────────────────────────────────────────────── */
         .stats-bar { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
@@ -601,9 +622,15 @@
             </div>
         </div>
 
-        <button class="btn-scan" onclick="runScan()" id="scanButton">
-            <span>Run Scan</span>
-        </button>
+        <div class="btn-row">
+            <button class="btn-scan" onclick="runScan()" id="scanButton">
+                <span>Run Scan</span>
+            </button>
+            <a id="pdfButton" class="btn-outline" style="display:none"
+               target="_blank" rel="noopener">
+                ↓ Download PDF Report
+            </a>
+        </div>
     </div>
 
     <!-- Results -->
@@ -762,6 +789,7 @@
         };
         scanButton.disabled = true;
         scanButton.querySelector('span').textContent = 'Scanning…';
+        document.getElementById('pdfButton').style.display = 'none';
         setResults(`<div class="loading"><div class="spinner"></div><span>${loadingMsgs[currentSource]}</span></div>`);
 
         // ── Build form data ───────────────────────────────────────────
@@ -799,8 +827,14 @@
 
             if (data.error) {
                 setResults(alertHtml('error', '✖', `<strong>Error:</strong> ${escapeHtml(data.error)}`));
+                document.getElementById('pdfButton').style.display = 'none';
                 return;
             }
+
+            // Show PDF download button now that we have a scan ID
+            const pdfBtn = document.getElementById('pdfButton');
+            pdfBtn.href  = `/api/export/${data.scan_id}/pdf`;
+            pdfBtn.style.display = 'inline-flex';
             if (data.total_violations === 0) {
                 setResults(alertHtml('ok', '✔', 'No prohibited words found — repository is clean.'));
                 return;
