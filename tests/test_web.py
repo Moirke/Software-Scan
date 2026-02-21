@@ -173,7 +173,7 @@ class TestZipScan(WebTestCase):
         data = r.get_json()
         self.assertGreater(len(data['results']), 0)
         result = data['results'][0]
-        for field in ('file', 'line_number', 'line_content', 'prohibited_word'):
+        for field in ('file', 'line_number', 'line_content', 'prohibited_word', 'match_type'):
             self.assertIn(field, result, msg=f"Missing field: {field}")
 
     def test_nested_zip_violations_found(self):
@@ -423,6 +423,65 @@ class TestNormalizeGitUrl(unittest.TestCase):
         a = _normalize_git_url('https://github.com/org/repo-a')
         b = _normalize_git_url('https://github.com/org/repo-b')
         self.assertNotEqual(a, b)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Partial match classification via the web API
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestPartialMatchWeb(WebTestCase):
+
+    def test_response_includes_violation_type_counts(self):
+        r = self._scan_zip(_make_zip({'f.py': DIRTY_PY}))
+        data = r.get_json()
+        self.assertIn('exact_violations',   data)
+        self.assertIn('partial_violations', data)
+
+    def test_exact_plus_partial_equals_total(self):
+        r = self._scan_zip(_make_zip({'f.py': DIRTY_PY}))
+        data = r.get_json()
+        self.assertEqual(
+            data['exact_violations'] + data['partial_violations'],
+            data['total_violations'],
+        )
+
+    def test_results_include_match_type_field(self):
+        r = self._scan_zip(_make_zip({'f.py': DIRTY_PY}))
+        data = r.get_json()
+        for result in data['results']:
+            self.assertIn('match_type', result)
+            self.assertIn(result['match_type'], ('exact', 'partial'))
+
+    def test_standalone_word_counted_as_exact(self):
+        # 'password = ...' — the word is standalone, should be exact
+        r = self._scan_zip(_make_zip({'f.py': DIRTY_PY}))
+        data = r.get_json()
+        self.assertGreater(data['exact_violations'], 0)
+
+    def test_embedded_word_counted_as_partial(self):
+        # 'passwordmanager' — 'password' is a substring
+        content = b'config = passwordmanager_settings\n'
+        r = self._scan_zip(_make_zip({'f.py': content}))
+        data = r.get_json()
+        self.assertGreater(data['partial_violations'], 0)
+        self.assertEqual(data['exact_violations'], 0)
+
+    def test_both_types_on_same_scan(self):
+        content = b'password = passwordmanager\n'
+        r = self._scan_zip(_make_zip({'f.py': content}))
+        data = r.get_json()
+        self.assertGreater(data['exact_violations'],   0)
+        self.assertGreater(data['partial_violations'], 0)
+
+    def test_export_includes_match_type_in_results(self):
+        r = self._scan_zip(_make_zip({'f.py': DIRTY_PY}))
+        scan_id = r.get_json()['scan_id']
+        export_r = self.client.get(f'/api/export/{scan_id}')
+        import json
+        parsed = json.loads(export_r.data)
+        self.assertGreater(len(parsed['results']), 0)
+        for result in parsed['results']:
+            self.assertIn('match_type', result)
 
 
 if __name__ == '__main__':

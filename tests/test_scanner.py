@@ -174,15 +174,19 @@ class TestWordMatching(ScannerTestCase):
         self.write_text('clean.py', CLEAN_CONTENT)
         self.assertEqual(self.scan(), [])
 
-    def test_word_boundary_no_partial_suffix(self):
-        # "passwords" must NOT match "\bpassword\b"
+    def test_word_boundary_no_exact_suffix(self):
+        # "passwords" must not produce an EXACT match — only partial
         self.write_text('f.py', 'passwords = []\n')
-        self.assertEqual(self.scan(), [])
+        results = self.scan()
+        exact = [r for r in results if r.get('match_type') == 'exact']
+        self.assertEqual(exact, [], "Embedded word should not be exact")
 
-    def test_word_boundary_no_partial_prefix(self):
-        # "notpassword" must NOT match "\bpassword\b"
+    def test_word_boundary_no_exact_prefix(self):
+        # "notpassword" must not produce an EXACT match — only partial
         self.write_text('f.py', 'notpassword = True\n')
-        self.assertEqual(self.scan(), [])
+        results = self.scan()
+        exact = [r for r in results if r.get('match_type') == 'exact']
+        self.assertEqual(exact, [], "Embedded word should not be exact")
 
     def test_word_boundary_matches_with_punctuation(self):
         self.write_text('f.py', 'password: hunter2\n')
@@ -221,7 +225,7 @@ class TestWordMatching(ScannerTestCase):
         results = self.scan()
         self.assertGreater(len(results), 0)
         r = results[0]
-        for field in ('file', 'line_number', 'line_content', 'prohibited_word', 'position'):
+        for field in ('file', 'line_number', 'line_content', 'prohibited_word', 'position', 'match_type'):
             self.assertIn(field, r, msg=f"Missing field: {field}")
 
     def test_correct_line_number_reported(self):
@@ -544,6 +548,129 @@ class TestDirectoryScanning(ScannerTestCase):
         scanner.cleanup()
         output = scanner.format_results(results)
         self.assertIn('violation', output.lower())
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Partial (substring) match detection
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestPartialMatching(ScannerTestCase):
+    """
+    Verifies that words appearing as substrings of larger tokens are reported
+    separately from whole-word matches, each with the correct match_type.
+    """
+
+    def test_standalone_word_is_exact(self):
+        self.write_text('f.py', 'password = "x"\n')
+        results = self.scan()
+        exact = [r for r in results if r.get('match_type') == 'exact']
+        self.assertGreater(len(exact), 0)
+        self.assertTrue(any(r['prohibited_word'] == 'password' for r in exact))
+
+    def test_embedded_word_is_partial(self):
+        # 'password' is a substring of 'passwordmanager' — should be partial
+        self.write_text('f.py', 'passwordmanager = "x"\n')
+        results = self.scan()
+        partial = [r for r in results if r.get('match_type') == 'partial']
+        self.assertGreater(len(partial), 0)
+        self.assertTrue(any(r['prohibited_word'] == 'password' for r in partial))
+
+    def test_embedded_word_is_not_exact(self):
+        self.write_text('f.py', 'passwordmanager = "x"\n')
+        results = self.scan()
+        exact = [r for r in results if r.get('match_type') == 'exact']
+        self.assertFalse(any(r['prohibited_word'] == 'password' for r in exact))
+
+    def test_both_exact_and_partial_on_same_line(self):
+        # 'password' standalone (exact) and inside 'passwordmanager' (partial)
+        self.write_text('f.py', 'password = passwordmanager\n')
+        results = self.scan()
+        pw = [r for r in results if r['prohibited_word'] == 'password']
+        types = {r['match_type'] for r in pw}
+        self.assertIn('exact',   types, "Standalone 'password' should be exact")
+        self.assertIn('partial', types, "Embedded 'password' in 'passwordmanager' should be partial")
+
+    def test_no_position_duplicate(self):
+        # Each position should appear at most once per word on a given line
+        self.write_text('f.py', 'password = "x"\n')
+        results = self.scan()
+        pw = [r for r in results if r['prohibited_word'] == 'password']
+        positions = [r['position'] for r in pw]
+        self.assertEqual(len(positions), len(set(positions)))
+
+    def test_match_type_field_on_all_results(self):
+        self.write_text('f.py', 'password = passwordmanager\n')
+        results = self.scan()
+        self.assertGreater(len(results), 0)
+        for r in results:
+            self.assertIn('match_type', r)
+            self.assertIn(r['match_type'], ('exact', 'partial'))
+
+    def test_underscore_embedded_word_is_partial(self):
+        # 'secret' inside 'old_secret_value' — underscore is a word char so no \b
+        self.write_text('f.py', 'old_secret_value = 1\n')
+        results = self.scan()
+        partial = [r for r in results
+                   if r.get('match_type') == 'partial' and r['prohibited_word'] == 'secret']
+        self.assertGreater(len(partial), 0)
+
+    def test_custom_word_binary_example(self):
+        """User's example: 'bin' should match inside 'binary' as a partial match."""
+        bin_words = os.path.join(self.tmpdir, 'bin_words.txt')
+        with open(bin_words, 'w') as f:
+            f.write('bin\n')
+        cfg_path = self._write_config(prohibited_words_file=bin_words)
+        scanner = ProhibitedWordScanner(cfg_path)
+
+        self.write_text('f.py', 'mode = binary\n')
+        results = scanner.scan_directory(self.scan_dir)
+        scanner.cleanup()
+
+        partial = [r for r in results if r.get('match_type') == 'partial']
+        self.assertGreater(len(partial), 0)
+        self.assertTrue(any(r['prohibited_word'] == 'bin' for r in partial))
+
+    def test_custom_word_exact_standalone(self):
+        """'bin' as a standalone word should be exact, not partial."""
+        bin_words = os.path.join(self.tmpdir, 'bin_words.txt')
+        with open(bin_words, 'w') as f:
+            f.write('bin\n')
+        cfg_path = self._write_config(prohibited_words_file=bin_words)
+        scanner = ProhibitedWordScanner(cfg_path)
+
+        self.write_text('f.py', 'path = "/usr/bin"\n')
+        results = scanner.scan_directory(self.scan_dir)
+        scanner.cleanup()
+
+        exact = [r for r in results if r.get('match_type') == 'exact']
+        self.assertGreater(len(exact), 0)
+        self.assertTrue(any(r['prohibited_word'] == 'bin' for r in exact))
+
+    def test_format_results_shows_exact_section(self):
+        self.write_text('f.py', 'password = "x"\n')
+        scanner = self.make_scanner()
+        results = scanner.scan_directory(self.scan_dir)
+        scanner.cleanup()
+        output = scanner.format_results(results)
+        self.assertIn('EXACT', output.upper())
+
+    def test_format_results_shows_partial_section(self):
+        self.write_text('f.py', 'passwordmanager = "x"\n')
+        scanner = self.make_scanner()
+        results = scanner.scan_directory(self.scan_dir)
+        scanner.cleanup()
+        output = scanner.format_results(results)
+        self.assertIn('PARTIAL', output.upper())
+
+    def test_format_results_summary_counts(self):
+        # One exact + one partial on same line → summary should reflect both
+        self.write_text('f.py', 'password = passwordmanager\n')
+        scanner = self.make_scanner()
+        results = scanner.scan_directory(self.scan_dir)
+        scanner.cleanup()
+        output = scanner.format_results(results)
+        self.assertRegex(output, r'\d+ exact')
+        self.assertRegex(output, r'\d+ partial')
 
 
 if __name__ == '__main__':

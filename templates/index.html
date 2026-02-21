@@ -18,6 +18,7 @@
             --accent-hover:    #4c51bf;
             --accent-glow:     rgba(90, 103, 216, 0.25);
             --stat-num:        #5a67d8;
+            --partial-badge:   #d97706;
             --warn-bg:         #fffbeb;
             --warn-border:     #f59e0b;
             --warn-text:       #92400e;
@@ -54,6 +55,7 @@
             --warn-border:     #b45309;
             --warn-text:       #fcd34d;
             --warn-code:       #fde68a;
+            --partial-badge:   #f59e0b;
             --err-bg:          #1e0a0a;
             --err-border:      #b91c1c;
             --err-text:        #fca5a5;
@@ -408,7 +410,8 @@
         .violation-file { font-size: 0.85rem; font-weight: 600; color: var(--text); margin-bottom: 8px; word-break: break-all; }
         .violation-row  { display: flex; align-items: baseline; gap: 8px; margin: 5px 0; font-family: 'SF Mono','Fira Code','Monaco',monospace; font-size: 0.8rem; }
         .line-num       { color: var(--text-subtle); font-size: 0.75rem; min-width: 52px; flex-shrink: 0; }
-        .violation-word { background: #ef4444; color: white; padding: 1px 5px; border-radius: 4px; font-weight: 700; font-size: 0.75rem; flex-shrink: 0; }
+        .violation-word         { background: #ef4444; color: white; padding: 1px 5px; border-radius: 4px; font-weight: 700; font-size: 0.75rem; flex-shrink: 0; }
+        .violation-word.partial { background: var(--partial-badge); }
         .violation-line { color: var(--warn-code); word-break: break-all; }
 
         .alert {
@@ -803,28 +806,45 @@
                 return;
             }
 
-            const uniqueFiles = new Set(data.results.map(r => r.file)).size;
+            const uniqueFiles     = new Set(data.results.map(r => r.file)).size;
+            const exactViolations   = data.exact_violations   || 0;
+            const partialViolations = data.partial_violations || 0;
+
             let html = `<div class="results-heading">Scan results</div>`;
             html += `<div class="stats-bar">`;
-            html += statCard(data.total_violations, 'Violations');
-            html += statCard(uniqueFiles, 'Files affected');
+            html += statCard(data.total_violations, 'Total');
+            html += statCard(exactViolations,       'Exact');
+            html += statCard(partialViolations,     'Partial');
+            html += statCard(uniqueFiles,           'Files affected');
             html += `</div>`;
 
-            const byFile = {};
-            data.results.forEach(r => { (byFile[r.file] = byFile[r.file] || []).push(r); });
+            const exact   = data.results.filter(r => r.match_type === 'exact');
+            const partial = data.results.filter(r => r.match_type === 'partial');
 
-            for (const [file, violations] of Object.entries(byFile)) {
-                html += `<div class="violation">`;
-                html += `<div class="violation-file">📄 ${escapeHtml(file)}</div>`;
-                violations.forEach(v => {
-                    html += `<div class="violation-row">`;
-                    html += `<span class="line-num">line ${v.line_number}</span>`;
-                    html += `<span class="violation-word">${escapeHtml(v.prohibited_word)}</span>`;
-                    html += `<span class="violation-line">${escapeHtml(v.line_content)}</span>`;
-                    html += `</div>`;
-                });
-                html += `</div>`;
+            function renderGroup(violations, badgeClass) {
+                if (!violations.length) return '';
+                const byFile = {};
+                violations.forEach(r => { (byFile[r.file] = byFile[r.file] || []).push(r); });
+                let h = '';
+                for (const [file, vs] of Object.entries(byFile)) {
+                    h += `<div class="violation">`;
+                    h += `<div class="violation-file">📄 ${escapeHtml(file)}</div>`;
+                    vs.forEach(v => {
+                        h += `<div class="violation-row">`;
+                        h += `<span class="line-num">line ${v.line_number}</span>`;
+                        h += `<span class="violation-word ${badgeClass}">${escapeHtml(v.prohibited_word)}</span>`;
+                        h += `<span class="violation-line">${escapeHtml(v.line_content)}</span>`;
+                        h += `</div>`;
+                    });
+                    h += `</div>`;
+                }
+                return h;
             }
+
+            if (exact.length)
+                html += `<div class="results-heading">Exact matches</div>${renderGroup(exact, '')}`;
+            if (partial.length)
+                html += `<div class="results-heading" style="margin-top:24px">Partial matches</div>${renderGroup(partial, 'partial')}`;
 
             if (data.has_more)
                 html += alertHtml('info', 'ℹ', 'Showing the first 100 results. Export the full scan to see all violations.');

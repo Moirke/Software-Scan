@@ -187,38 +187,57 @@ class ProhibitedWordScanner:
         return False
 
     def _search_in_file(self, filepath: str) -> List[Dict]:
-        """Search for prohibited words in a single file"""
+        """Search for prohibited words in a single file.
+
+        Each match is classified as one of:
+          'exact'   — the word appears as a complete token (word-boundary match)
+          'partial' — the word is a substring of a larger token
+        """
         results = []
-        
+
         if self._is_binary_file(filepath):
             return results
-        
+
         try:
             file_size = os.path.getsize(filepath)
             if file_size > self.max_file_size:
                 print(f"Skipping large file: {filepath} ({file_size / 1024 / 1024:.2f} MB)")
                 return results
-            
+
             with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                 for line_num, line in enumerate(f, 1):
                     search_line = line if self.case_sensitive else line.lower()
-                    
+
                     for word in self.prohibited_words:
-                        # Use word boundary matching for whole words
-                        pattern = r'\b' + re.escape(word) + r'\b'
-                        matches = re.finditer(pattern, search_line)
-                        
-                        for match in matches:
+                        # First pass: whole-word (exact) matches
+                        exact_pattern = r'\b' + re.escape(word) + r'\b'
+                        exact_positions: Set[int] = set()
+                        for match in re.finditer(exact_pattern, search_line):
+                            exact_positions.add(match.start())
                             results.append({
-                                'file': filepath,
-                                'line_number': line_num,
-                                'line_content': line.strip(),
+                                'file':            filepath,
+                                'line_number':     line_num,
+                                'line_content':    line.strip(),
                                 'prohibited_word': word,
-                                'position': match.start()
+                                'position':        match.start(),
+                                'match_type':      'exact',
                             })
+
+                        # Second pass: partial (substring) matches not already
+                        # captured as exact matches above
+                        for match in re.finditer(re.escape(word), search_line):
+                            if match.start() not in exact_positions:
+                                results.append({
+                                    'file':            filepath,
+                                    'line_number':     line_num,
+                                    'line_content':    line.strip(),
+                                    'prohibited_word': word,
+                                    'position':        match.start(),
+                                    'match_type':      'partial',
+                                })
         except Exception as e:
             print(f"Error reading file {filepath}: {e}")
-        
+
         return results
     
     def scan_directory(self, repo_path: str, recursive: bool = True) -> List[Dict]:
@@ -269,30 +288,41 @@ class ProhibitedWordScanner:
         self.temp_dirs = []
     
     def format_results(self, results: List[Dict]) -> str:
-        """Format results as readable text"""
+        """Format results as readable text, grouped by match type."""
         if not results:
             return "No prohibited words found!"
-        
+
+        exact   = [r for r in results if r.get('match_type') == 'exact']
+        partial = [r for r in results if r.get('match_type') == 'partial']
+
         output = [f"\n{'='*80}"]
-        output.append(f"SCAN RESULTS: Found {len(results)} violation(s)")
+        output.append(
+            f"SCAN RESULTS: Found {len(results)} violation(s)  "
+            f"[{len(exact)} exact, {len(partial)} partial]"
+        )
         output.append('='*80 + '\n')
-        
-        # Group by file
-        by_file = {}
-        for result in results:
-            file = result['file']
-            if file not in by_file:
-                by_file[file] = []
-            by_file[file].append(result)
-        
-        for file, violations in by_file.items():
-            output.append(f"\nFile: {file}")
-            output.append(f"Violations: {len(violations)}")
-            output.append("-" * 80)
-            
-            for v in violations:
-                output.append(f"  Line {v['line_number']}: Found '{v['prohibited_word']}'")
-                output.append(f"    {v['line_content']}")
-                output.append("")
-        
+
+        def _render_group(group, label):
+            if not group:
+                return
+            output.append(f"\n{label}")
+            output.append('-' * len(label))
+            by_file = {}
+            for result in group:
+                file = result['file']
+                if file not in by_file:
+                    by_file[file] = []
+                by_file[file].append(result)
+            for file, violations in by_file.items():
+                output.append(f"\n  File: {file}")
+                output.append(f"  Violations: {len(violations)}")
+                output.append("  " + "-" * 60)
+                for v in violations:
+                    output.append(f"    Line {v['line_number']}: Found '{v['prohibited_word']}'")
+                    output.append(f"      {v['line_content']}")
+                    output.append("")
+
+        _render_group(exact,   "EXACT MATCHES (whole word)")
+        _render_group(partial, "PARTIAL MATCHES (substring)")
+
         return '\n'.join(output)

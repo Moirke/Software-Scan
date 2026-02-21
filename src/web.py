@@ -356,22 +356,29 @@ def scan():
         results  = scanner.scan_directory(work_dir, recursive=True)
         scanner.cleanup()
 
+        exact_count   = sum(1 for r in results if r.get('match_type') == 'exact')
+        partial_count = sum(1 for r in results if r.get('match_type') == 'partial')
+
         scan_record = {
-            'id':               len(scan_history),
-            'timestamp':        datetime.now().isoformat(),
-            'repo_path':        scan_label,
-            'source_type':      source_type,
-            'total_violations': len(results),
-            'results':          results,
+            'id':                len(scan_history),
+            'timestamp':         datetime.now().isoformat(),
+            'repo_path':         scan_label,
+            'source_type':       source_type,
+            'total_violations':  len(results),
+            'exact_violations':  exact_count,
+            'partial_violations': partial_count,
+            'results':           results,
         }
         scan_history.append(scan_record)
 
         return jsonify({
-            'success':          True,
-            'scan_id':          scan_record['id'],
-            'total_violations': len(results),
-            'results':          results[:100],
-            'has_more':         len(results) > 100,
+            'success':            True,
+            'scan_id':            scan_record['id'],
+            'total_violations':   len(results),
+            'exact_violations':   exact_count,
+            'partial_violations': partial_count,
+            'results':            results[:100],
+            'has_more':           len(results) > 100,
         })
 
     except ValueError as e:
