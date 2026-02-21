@@ -243,6 +243,16 @@ def _resolve_words_file(config_source_type: str, upload, server_path: str,
 
 # ── Flask routes ───────────────────────────────────────────────────────────
 
+@app.route('/health')
+def health():
+    """
+    Lightweight health check for load balancer probes.
+    Returns 200 as long as the process is alive and can import its deps.
+    No I/O or heavy work — must respond in < 1 s.
+    """
+    return jsonify({'status': 'ok'}), 200
+
+
 @app.route('/')
 def index():
     """Render main page"""

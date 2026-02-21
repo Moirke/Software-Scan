@@ -75,6 +75,11 @@ class TestEndpoints(WebTestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn(b'Repository Scanner', r.data)
 
+    def test_health_endpoint_returns_200(self):
+        r = self.client.get('/health')
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json().get('status'), 'ok')
+
     def test_history_endpoint_returns_list(self):
         r = self.client.get('/api/history')
         self.assertEqual(r.status_code, 200)

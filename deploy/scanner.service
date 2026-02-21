@@ -1,50 +1,44 @@
-# systemd service unit for Repository Scanner (Gunicorn)
+# systemd service unit for Repository Scanner (Docker)
 #
-# Install:
-#   sudo cp deploy/scanner.service /etc/systemd/system/scanner.service
-#   sudo systemctl daemon-reload
-#   sudo systemctl enable --now scanner
+# This unit is written by cloud-init/bootstrap scripts; do not edit manually
+# on a running instance — update cloud-init.yml instead and re-launch.
 #
-# Logs:
-#   journalctl -u scanner -f
+# Logs:  journalctl -u scanner -f
+#        docker logs scanner
 
 [Unit]
-Description=Repository Scanner (Gunicorn)
-After=network.target
+Description=Repository Scanner
+After=docker.service network-online.target
+Requires=docker.service
 
 [Service]
-Type=notify
+EnvironmentFile=/etc/scanner/scanner.env
 
-# ── Run as a dedicated non-root user ────────────────────────────────────────
-User=scanner
-Group=scanner
-WorkingDirectory=/opt/scanner
+# Pull the latest image before starting.
+# Safe to run on every start — docker pull is a no-op if the digest matches.
+ExecStartPre=/usr/bin/docker pull SCANNER_IMAGE_PLACEHOLDER
 
-# ── Environment ─────────────────────────────────────────────────────────────
-Environment="PATH=/opt/scanner/venv/bin"
-# Set FLASK_DEBUG=true only for local troubleshooting — never in production
-Environment="FLASK_DEBUG=false"
-# Optional: override the bind port
-# Environment="PORT=5000"
+# Remove any leftover container from a previous run.
+ExecStartPre=-/usr/bin/docker rm -f scanner
 
-# ── Start / stop ─────────────────────────────────────────────────────────────
-# Worker count: (2 x nproc) + 1  — adjust to your server's CPU count
-ExecStart=/opt/scanner/venv/bin/gunicorn \
-    --workers 4 \
-    --worker-class gthread \
-    --threads 2 \
-    --timeout 600 \
-    --bind 127.0.0.1:5000 \
-    --access-logfile /var/log/scanner/access.log \
-    --error-logfile  /var/log/scanner/error.log \
-    wsgi:app
+ExecStart=/usr/bin/docker run \
+    --name scanner \
+    --rm \
+    --env-file /etc/scanner/scanner.env \
+    -p 8080:8080 \
+    --tmpfs /tmp:rw,size=2g,mode=1777 \
+    --memory=2g \
+    --cpus=2 \
+    --log-driver=journald \
+    --log-opt tag=scanner \
+    SCANNER_IMAGE_PLACEHOLDER
 
-ExecReload=/bin/kill -s HUP $MAINPID
-KillMode=mixed
-TimeoutStopSec=5
-PrivateTmp=true
+# Give in-flight scans 30 s to finish before SIGKILL.
+ExecStop=/usr/bin/docker stop -t 30 scanner
+
 Restart=on-failure
-RestartSec=5
+RestartSec=10
+TimeoutStartSec=120
 
 [Install]
 WantedBy=multi-user.target

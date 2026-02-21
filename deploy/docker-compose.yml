@@ -1,0 +1,57 @@
+# ── Repository Scanner — Docker Compose ──────────────────────────────────────
+#
+# Use cases:
+#   Local development:  docker compose up
+#   Local build+run:    docker compose up --build
+#   Single-node prod:   docker compose -f docker-compose.yml up -d
+#
+# For multi-instance production the load balancer takes the place of the
+# 'ports' mapping here — each instance exposes port 8080 directly to the LB.
+
+services:
+  scanner:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: scanner:latest   # tag used when pulling from a registry
+
+    # Expose port 8080 to the host (or to the LB in production).
+    ports:
+      - "${PORT:-8080}:8080"
+
+    environment:
+      FLASK_DEBUG: "${FLASK_DEBUG:-false}"
+      PORT: "${PORT:-8080}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      # GUNICORN_WORKERS: "5"
+      # GUNICORN_THREADS: "4"
+      # GUNICORN_TIMEOUT: "600"
+
+    # Give the container enough RAM for large repo/archive scans.
+    # Tune to your instance size.
+    mem_limit: 2g
+    cpus: "2"
+
+    # RAM-backed tmpfs for scan work — fast and automatically cleaned up.
+    tmpfs:
+      - /tmp:size=2g,mode=1777
+
+    # Restart policy for single-node or compose-managed deployments.
+    restart: unless-stopped
+
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"
+      interval: 30s
+      timeout:  5s
+      retries:  3
+      start_period: 15s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"

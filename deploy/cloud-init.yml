@@ -1,0 +1,116 @@
+#cloud-config
+# ── Repository Scanner — instance bootstrap ───────────────────────────────────
+#
+# Pass this as user-data when launching an instance on any cloud that supports
+# cloud-init:  AWS EC2, GCP Compute Engine, Azure VM, DigitalOcean Droplet,
+#              Linode/Akamai, Hetzner, Oracle Cloud, etc.
+#
+# Tested base images: Ubuntu 22.04 LTS, Debian 12, Amazon Linux 2023.
+#
+# Before using, set SCANNER_IMAGE below to your container registry path.
+# Example values:
+#   ghcr.io/your-org/scanner:latest
+#   123456789.dkr.ecr.us-east-1.amazonaws.com/scanner:latest
+#   us-central1-docker.pkg.dev/my-project/scanner/scanner:latest
+#   registry.hub.docker.com/your-username/scanner:latest
+#
+# The instance needs outbound HTTPS to reach the registry and to clone repos.
+
+# ── Packages ──────────────────────────────────────────────────────────────────
+package_update: true
+packages:
+  - docker.io          # Docker engine (ubuntu/debian package name)
+  - docker-compose-plugin
+
+# ── Files written before runcmd ───────────────────────────────────────────────
+write_files:
+  # Environment file — override any value here without rebuilding the image.
+  # Restrict permissions because this may contain credentials in future.
+  - path: /etc/scanner/scanner.env
+    permissions: '0640'
+    owner: root:docker
+    content: |
+      # ── Application ──────────────────────────────────────────────
+      FLASK_DEBUG=false
+      PORT=8080
+      LOG_LEVEL=info
+
+      # ── Gunicorn ─────────────────────────────────────────────────
+      # Defaults: (2 × vCPU) + 1 workers, 4 threads each, 600 s timeout.
+      # Uncomment to override:
+      # GUNICORN_WORKERS=5
+      # GUNICORN_THREADS=4
+      # GUNICORN_TIMEOUT=600
+
+  # systemd unit — manages the container as a system service.
+  # Pulls the latest image on every start so instances always run the
+  # current version when they boot (or when you restart the service).
+  - path: /etc/systemd/system/scanner.service
+    content: |
+      [Unit]
+      Description=Repository Scanner
+      After=docker.service network-online.target
+      Requires=docker.service
+
+      [Service]
+      EnvironmentFile=/etc/scanner/scanner.env
+
+      # Pull latest image before starting (idempotent; no-op if up to date).
+      # Remove this line if you want instances to only run the image that was
+      # present at launch time (faster start, but requires AMI/image baking).
+      ExecStartPre=/usr/bin/docker pull SCANNER_IMAGE_PLACEHOLDER
+
+      # Remove any previous container (clean start every time).
+      ExecStartPre=-/usr/bin/docker rm -f scanner
+
+      ExecStart=/usr/bin/docker run \
+          --name scanner \
+          --rm \
+          --env-file /etc/scanner/scanner.env \
+          -p 8080:8080 \
+          --tmpfs /tmp:rw,size=2g,mode=1777 \
+          --memory=2g \
+          --cpus=2 \
+          --log-driver=journald \
+          --log-opt tag=scanner \
+          SCANNER_IMAGE_PLACEHOLDER
+
+      ExecStop=/usr/bin/docker stop -t 30 scanner
+
+      Restart=on-failure
+      RestartSec=10
+      TimeoutStartSec=120
+
+      [Install]
+      WantedBy=multi-user.target
+
+# ── Bootstrap commands ────────────────────────────────────────────────────────
+runcmd:
+  # 1. Enable and start Docker.
+  - systemctl enable docker
+  - systemctl start docker
+
+  # 2. Set the container image reference.
+  #    Replace this value with your actual registry path.
+  #    In practice, your IaC tool (Terraform, CloudFormation, etc.) should
+  #    substitute this variable before passing the file as user-data.
+  - export SCANNER_IMAGE="ghcr.io/your-org/scanner:latest"
+
+  # 3. Write the image reference into the systemd unit.
+  - sed -i "s|SCANNER_IMAGE_PLACEHOLDER|${SCANNER_IMAGE}|g" /etc/systemd/system/scanner.service
+
+  # 4. Optional: log in to a private registry.
+  #    Uncomment the block that matches your registry.
+  #
+  #    AWS ECR:
+  #    - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 123456789.dkr.ecr.us-east-1.amazonaws.com
+  #
+  #    GCP Artifact Registry:
+  #    - gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+  #
+  #    GHCR (GitHub) with a PAT stored in SSM / Secret Manager:
+  #    - echo "${GHCR_PAT}" | docker login ghcr.io -u your-username --password-stdin
+
+  # 5. Enable and start the scanner service.
+  - systemctl daemon-reload
+  - systemctl enable --now scanner
