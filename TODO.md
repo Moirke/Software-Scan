@@ -103,6 +103,18 @@ Things we want to improve but haven't tackled yet, roughly grouped by theme.
 
 ---
 
+## User Feedback
+
+- **In-app feedback collection** — no mechanism currently exists for users to
+  report false positives, request new prohibited words, or flag issues with a
+  scan result. Options: a simple thumbs-up/thumbs-down on each result, a free-
+  text feedback form that posts to a Slack webhook or email, or an integration
+  with an existing ticketing system (Jira, ServiceNow). Feedback data would be
+  valuable for tuning the prohibited words list and improving partial-match
+  accuracy over time.
+
+---
+
 ## CI / CD
 
 - **Docker build and push pipeline** — the existing Jenkinsfiles scan for
