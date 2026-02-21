@@ -100,6 +100,10 @@ class ProhibitedWordScanner:
         self.case_sensitive = self.config.get('case_sensitive', False)
         self.max_file_size = self.config.get('max_file_size_mb', 10) * 1024 * 1024
         self.prohibited_words = self._load_prohibited_words()
+        self.excluded_paths = [
+            os.path.normpath(os.path.abspath(p))
+            for p in self.config.get('excluded_paths', [])
+        ]
         self.temp_dirs = []
         
     def _load_config(self, config_path: str) -> Dict:
@@ -169,6 +173,19 @@ class ProhibitedWordScanner:
         
         return temp_dir
     
+    def _is_excluded(self, path: str) -> bool:
+        """Return True if path falls under any configured excluded_paths entry."""
+        if not self.excluded_paths:
+            return False
+        norm = os.path.normpath(os.path.abspath(path))
+        for excl in self.excluded_paths:
+            try:
+                if os.path.commonpath([norm, excl]) == excl:
+                    return True
+            except ValueError:
+                pass  # Different drives on Windows
+        return False
+
     def _search_in_file(self, filepath: str) -> List[Dict]:
         """Search for prohibited words in a single file"""
         results = []
@@ -211,6 +228,9 @@ class ProhibitedWordScanner:
         
         def scan_path(path: str, is_extracted: bool = False):
             """Recursively scan a path"""
+            if self._is_excluded(path):
+                return
+
             if os.path.isfile(path):
                 if path in scanned_files:
                     return

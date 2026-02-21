@@ -166,6 +166,81 @@ def _scan_from_artifactory(url, auth_headers, temp_dir, max_file_size):
         raise ValueError("Unexpected response from Artifactory storage API.")
 
 
+# ── Git helpers ───────────────────────────────────────────────────────────
+
+def _normalize_git_url(url: str) -> str:
+    """Strip trailing slashes and .git suffix for reliable URL comparison."""
+    url = url.strip().rstrip('/')
+    if url.endswith('.git'):
+        url = url[:-4]
+    return url.lower()
+
+
+def _clone_repo(url: str, dest_dir: str) -> None:
+    """Clone a git repo (shallow) into dest_dir, raising ValueError on failure."""
+    result = subprocess.run(
+        ['git', 'clone', '--depth=1', url, dest_dir],
+        capture_output=True, text=True, timeout=300
+    )
+    if result.returncode != 0:
+        raise ValueError(f'Failed to clone repository: {result.stderr.strip()}')
+
+
+def _resolve_words_file(config_source_type: str, upload, server_path: str,
+                        git_url: str, git_file_path: str,
+                        existing_clone_dir: str | None) -> tuple[str, str | None]:
+    """
+    Resolve the prohibited-words file from whichever config source was chosen.
+
+    Returns (words_path, config_clone_dir) where:
+      - words_path        is the absolute path to the words file to use
+      - config_clone_dir  is a temp dir to clean up (None if not needed)
+
+    The caller is responsible for deleting words_path unless words_path_is_server
+    is True (server_path case — the file belongs to the server, don't delete it).
+    """
+    if config_source_type == 'upload':
+        with tempfile.NamedTemporaryFile(mode='wb', suffix='.txt', delete=False) as f:
+            upload.save(f)
+            return f.name, None
+
+    if config_source_type == 'server_path':
+        path = server_path.strip()
+        if os.path.isdir(path):
+            candidate = os.path.join(path, 'prohibited_words.txt')
+            if not os.path.isfile(candidate):
+                raise ValueError(f"No prohibited_words.txt found in folder: {path}")
+            return candidate, None
+        if os.path.isfile(path):
+            return path, None
+        raise ValueError(f"Config path does not exist: {path}")
+
+    # git_repo — use an existing clone or clone fresh
+    if existing_clone_dir:
+        src = os.path.join(existing_clone_dir, git_file_path)
+        if not os.path.isfile(src):
+            raise ValueError(f"Config file not found in repository: {git_file_path}")
+        with tempfile.NamedTemporaryFile(mode='wb', suffix='.txt', delete=False) as f:
+            shutil.copy2(src, f.name)
+            return f.name, None
+
+    config_clone_dir = tempfile.mkdtemp(prefix='repo_scanner_cfg_')
+    try:
+        _clone_repo(git_url, config_clone_dir)
+    except ValueError:
+        shutil.rmtree(config_clone_dir, ignore_errors=True)
+        raise
+    src = os.path.join(config_clone_dir, git_file_path)
+    if not os.path.isfile(src):
+        shutil.rmtree(config_clone_dir, ignore_errors=True)
+        raise ValueError(f"Config file not found in repository: {git_file_path}")
+    with tempfile.NamedTemporaryFile(mode='wb', suffix='.txt', delete=False) as f:
+        shutil.copy2(src, f.name)
+        words_path = f.name
+    shutil.rmtree(config_clone_dir, ignore_errors=True)
+    return words_path, None
+
+
 # ── Flask routes ───────────────────────────────────────────────────────────
 
 @app.route('/')
@@ -176,89 +251,127 @@ def index():
 
 @app.route('/api/scan', methods=['POST'])
 def scan():
-    """Perform a scan — supports git repository URLs and Artifactory paths."""
-    work_dir   = None
-    words_path = None
-    config_path = None
+    """Perform a scan — git repo, Artifactory path, or uploaded ZIP."""
+    work_dir        = None
+    words_path      = None
+    words_is_server = False   # server_path words file belongs to the server — don't delete
+    config_path     = None
     try:
-        source_type      = request.form.get('source_type', 'git')
-        repo_url         = request.form.get('repo_url', '').strip()
-        prohibited_words_file = request.files.get('prohibited_words_file')
-        case_sensitive   = request.form.get('case_sensitive', 'false').lower() == 'true'
-        max_file_size_mb = int(request.form.get('max_file_size_mb', '10'))
-        # Artifactory-only auth fields
+        # ── Collect form fields ───────────────────────────────────────
+        source_type        = request.form.get('source_type', 'git')
+        config_source_type = request.form.get('config_source_type', 'upload')
+
+        repo_url    = request.form.get('repo_url', '').strip()
+        zip_file    = request.files.get('zip_file')
+
+        # Config source fields
+        cfg_upload      = request.files.get('prohibited_words_file')
+        cfg_server_path = request.form.get('config_server_path', '').strip()
+        cfg_git_url     = request.form.get('config_git_url', '').strip()
+        cfg_file_path   = request.form.get('config_file_path', 'prohibited_words.txt').strip() \
+                          or 'prohibited_words.txt'
+
+        # Artifactory auth
         art_api_key  = request.form.get('art_api_key', '').strip()
         art_username = request.form.get('art_username', '').strip()
         art_password = request.form.get('art_password', '').strip()
 
-        if not repo_url:
-            return jsonify({'error': 'Missing repository URL'}), 400
-        if not prohibited_words_file:
-            return jsonify({'error': 'Missing prohibited words file'}), 400
-
+        case_sensitive   = request.form.get('case_sensitive', 'false').lower() == 'true'
+        max_file_size_mb = int(request.form.get('max_file_size_mb', '10'))
         max_file_size_bytes = max_file_size_mb * 1024 * 1024
-        work_dir = tempfile.mkdtemp(prefix='repo_scanner_')
 
-        # ── Fetch source ─────────────────────────────────────────────
-        if source_type == 'artifactory':
+        # ── Validate inputs ───────────────────────────────────────────
+        if source_type in ('git', 'artifactory') and not repo_url:
+            return jsonify({'error': 'Missing repository URL'}), 400
+        if source_type == 'zip' and (not zip_file or not zip_file.filename):
+            return jsonify({'error': 'No ZIP file provided'}), 400
+        if config_source_type == 'upload' and (not cfg_upload or not cfg_upload.filename):
+            return jsonify({'error': 'No prohibited words file provided'}), 400
+        if config_source_type == 'server_path' and not cfg_server_path:
+            return jsonify({'error': 'No server path provided for config'}), 400
+        if config_source_type == 'git_repo' and not cfg_git_url:
+            return jsonify({'error': 'No git URL provided for config'}), 400
+
+        # ── Detect same-repo (clone once, exclude config path) ────────
+        same_repo = (
+            source_type == 'git'
+            and config_source_type == 'git_repo'
+            and _normalize_git_url(repo_url) == _normalize_git_url(cfg_git_url)
+        )
+
+        work_dir      = tempfile.mkdtemp(prefix='repo_scanner_')
+        excluded_paths = []
+        scan_label     = repo_url  # used in history
+
+        # ── Fetch scan source ─────────────────────────────────────────
+        if source_type == 'git':
+            parsed = urlparse(repo_url)
+            if parsed.scheme not in ('http', 'https', 'git', 'ssh') or not parsed.netloc:
+                return jsonify({'error': 'Invalid repository URL — must be http, https, git, or ssh'}), 400
+            if parsed.scheme in ('http', 'https'):
+                _check_ssrf(repo_url)
+            _clone_repo(repo_url, work_dir)
+
+        elif source_type == 'artifactory':
             _check_ssrf(repo_url)
             auth_headers = _artifactory_headers(art_api_key, art_username, art_password)
             _scan_from_artifactory(repo_url, auth_headers, work_dir, max_file_size_bytes)
 
-        else:  # git
-            parsed = urlparse(repo_url)
-            if parsed.scheme not in ('http', 'https', 'git', 'ssh') or not parsed.netloc:
-                return jsonify({
-                    'error': 'Invalid repository URL — must be http, https, git, or ssh'
-                }), 400
-            if parsed.scheme in ('http', 'https'):
-                _check_ssrf(repo_url)
+        elif source_type == 'zip':
+            scan_label = zip_file.filename
+            zip_file.save(os.path.join(work_dir, 'upload.zip'))
 
-            result = subprocess.run(
-                ['git', 'clone', '--depth=1', repo_url, work_dir],
-                capture_output=True, text=True, timeout=300
-            )
-            if result.returncode != 0:
-                return jsonify({
-                    'error': f'Failed to clone repository: {result.stderr.strip()}'
-                }), 400
+        # ── Resolve config (prohibited words file) ────────────────────
+        words_path, _ = _resolve_words_file(
+            config_source_type,
+            upload          = cfg_upload,
+            server_path     = cfg_server_path,
+            git_url         = cfg_git_url,
+            git_file_path   = cfg_file_path,
+            existing_clone_dir = work_dir if same_repo else None,
+        )
+        words_is_server = (config_source_type == 'server_path')
 
-        # ── Save uploaded prohibited-words file ──────────────────────
-        with tempfile.NamedTemporaryFile(mode='wb', suffix='.txt', delete=False) as f:
-            prohibited_words_file.save(f)
-            words_path = f.name
+        # ── Build excluded_paths for same-repo config ──────────────────
+        if same_repo:
+            config_dir = os.path.dirname(cfg_file_path)
+            excl = os.path.join(work_dir, config_dir) if config_dir \
+                   else os.path.join(work_dir, cfg_file_path)
+            excluded_paths.append(excl)
 
-        # ── Build scanner config ─────────────────────────────────────
-        config = {
+        # ── Build scanner config and run ──────────────────────────────
+        scanner_config: dict = {
             'prohibited_words_file': words_path,
-            'case_sensitive': case_sensitive,
-            'max_file_size_mb': max_file_size_mb,
+            'case_sensitive':        case_sensitive,
+            'max_file_size_mb':      max_file_size_mb,
         }
+        if excluded_paths:
+            scanner_config['excluded_paths'] = excluded_paths
+
         with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-            yaml.dump(config, f)
+            yaml.dump(scanner_config, f)
             config_path = f.name
 
-        # ── Run scan ─────────────────────────────────────────────────
         scanner = ProhibitedWordScanner(config_path)
-        results = scanner.scan_directory(work_dir, recursive=True)
+        results  = scanner.scan_directory(work_dir, recursive=True)
         scanner.cleanup()
 
         scan_record = {
-            'id': len(scan_history),
-            'timestamp': datetime.now().isoformat(),
-            'repo_path': repo_url,
-            'source_type': source_type,
+            'id':               len(scan_history),
+            'timestamp':        datetime.now().isoformat(),
+            'repo_path':        scan_label,
+            'source_type':      source_type,
             'total_violations': len(results),
-            'results': results,
+            'results':          results,
         }
         scan_history.append(scan_record)
 
         return jsonify({
-            'success': True,
-            'scan_id': scan_record['id'],
+            'success':          True,
+            'scan_id':          scan_record['id'],
             'total_violations': len(results),
-            'results': results[:100],
-            'has_more': len(results) > 100,
+            'results':          results[:100],
+            'has_more':         len(results) > 100,
         })
 
     except ValueError as e:
@@ -268,7 +381,7 @@ def scan():
     finally:
         if work_dir:
             shutil.rmtree(work_dir, ignore_errors=True)
-        if words_path and os.path.exists(words_path):
+        if words_path and not words_is_server and os.path.exists(words_path):
             os.unlink(words_path)
         if config_path and os.path.exists(config_path):
             os.unlink(config_path)

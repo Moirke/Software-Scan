@@ -136,19 +136,20 @@
             margin-bottom: 18px;
         }
 
-        /* ── Source-type selector ───────────────────────────────────── */
-        .source-tabs {
+        /* ── Tab selectors (shared by source + config) ─────────────── */
+        .tab-bar {
             display: flex;
             gap: 6px;
             background: var(--surface-alt);
             border: 1px solid var(--border);
             border-radius: var(--radius);
             padding: 4px;
-            margin-bottom: 22px;
+            margin-bottom: 16px;
             width: fit-content;
+            flex-wrap: wrap;
         }
 
-        .source-tab {
+        .tab-btn {
             padding: 7px 18px;
             border-radius: calc(var(--radius) - 2px);
             font-size: 0.875rem;
@@ -161,13 +162,16 @@
                         box-shadow var(--transition);
         }
 
-        .source-tab.active {
+        .tab-btn.active {
             background: var(--accent);
             color: white;
             box-shadow: 0 2px 8px var(--accent-glow);
         }
 
-        .source-tab:not(.active):hover { color: var(--text); background: var(--border); }
+        .tab-btn:not(.active):hover { color: var(--text); background: var(--border); }
+
+        /* Smaller tabs for config source */
+        .tab-bar.sm .tab-btn { padding: 5px 13px; font-size: 0.8rem; }
 
         /* ── Form elements ──────────────────────────────────────────── */
         .form-group { margin-bottom: 18px; }
@@ -205,6 +209,37 @@
             border-color: var(--accent);
             box-shadow: 0 0 0 3px var(--accent-glow);
         }
+
+        /* ── Section divider ────────────────────────────────────────── */
+        .section-divider {
+            border: none;
+            border-top: 1px solid var(--border);
+            margin: 22px 0 18px;
+        }
+
+        .section-label {
+            font-size: 0.75rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--text-subtle);
+            margin-bottom: 12px;
+        }
+
+        /* Same-repo hint */
+        .same-repo-hint {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.8rem;
+            color: var(--info-text);
+            background: var(--info-bg);
+            border: 1px solid var(--info-border);
+            border-radius: var(--radius);
+            padding: 8px 12px;
+            margin-top: 8px;
+        }
+        .same-repo-hint.visible { display: flex; }
 
         /* ── Artifactory auth section ───────────────────────────────── */
         .art-auth {
@@ -418,23 +453,39 @@
     <div class="card">
         <div class="card-title">Scan configuration</div>
 
-        <!-- Source type -->
-        <div class="source-tabs">
-            <button class="source-tab active" id="tab-git"
+        <!-- ── Scan target ─────────────────────────────────────────── -->
+        <div class="section-label">Scan target</div>
+        <div class="tab-bar">
+            <button class="tab-btn active" id="tab-git"
                     onclick="setSourceType('git')">Git Repository</button>
-            <button class="source-tab" id="tab-artifactory"
+            <button class="tab-btn" id="tab-artifactory"
                     onclick="setSourceType('artifactory')">Artifactory</button>
+            <button class="tab-btn" id="tab-zip"
+                    onclick="setSourceType('zip')">ZIP Upload</button>
         </div>
 
-        <!-- URL field (placeholder swaps with source type) -->
-        <div class="form-group">
+        <!-- URL input (git / artifactory) -->
+        <div class="form-group" id="urlGroup">
             <label for="repo_url">Repository URL</label>
             <input type="url" id="repo_url"
                    placeholder="https://github.com/owner/repo"
                    autocomplete="url" spellcheck="false">
         </div>
 
-        <!-- Artifactory auth (hidden for git) -->
+        <!-- ZIP upload zone -->
+        <div class="form-group" id="zipGroup" style="display:none;">
+            <label>ZIP file</label>
+            <div class="file-zone" id="zipZone">
+                <input type="file" id="zip_file" accept=".zip"
+                       onchange="onZipSelected(this)">
+                <div class="file-zone-icon">🗜️</div>
+                <div class="file-zone-label"><strong>Choose a ZIP</strong> or drag and drop</div>
+                <div class="file-zone-hint">.zip files only</div>
+            </div>
+            <div class="file-name" id="zipName"></div>
+        </div>
+
+        <!-- Artifactory auth -->
         <div class="art-auth" id="artAuth">
             <div class="art-auth-title">Authentication</div>
             <div class="auth-method-row">
@@ -445,7 +496,6 @@
                 <button class="auth-pill" id="pill-none"
                         onclick="setAuthMethod('none')">None (public)</button>
             </div>
-
             <div class="auth-fields visible" id="fields-apikey">
                 <div class="form-group">
                     <label for="art_api_key">API Key</label>
@@ -453,7 +503,6 @@
                            placeholder="AKCp..." autocomplete="off" spellcheck="false">
                 </div>
             </div>
-
             <div class="auth-fields" id="fields-basic">
                 <div class="two-col">
                     <div class="form-group">
@@ -470,23 +519,69 @@
             </div>
         </div>
 
-        <!-- Prohibited words file -->
-        <div class="form-group" style="margin-top:18px;">
-            <label for="prohibited_words_file">
-                Prohibited words file
-                <span class="hint">— one word per line</span>
-            </label>
-            <div class="file-zone" id="fileZone">
-                <input type="file" id="prohibited_words_file"
-                       accept=".txt,.text" onchange="onFileSelected(this)">
-                <div class="file-zone-icon">📄</div>
-                <div class="file-zone-label"><strong>Choose a file</strong> or drag and drop</div>
-                <div class="file-zone-hint">.txt files only</div>
-            </div>
-            <div class="file-name" id="fileName"></div>
+        <!-- ── Config source ───────────────────────────────────────── -->
+        <hr class="section-divider">
+        <div class="section-label">Prohibited words source</div>
+        <div class="tab-bar sm">
+            <button class="tab-btn active" id="cfg-tab-upload"
+                    onclick="setConfigSource('upload')">Upload file</button>
+            <button class="tab-btn" id="cfg-tab-server"
+                    onclick="setConfigSource('server_path')">Server path</button>
+            <button class="tab-btn" id="cfg-tab-git"
+                    onclick="setConfigSource('git_repo')">Git repository</button>
         </div>
 
-        <!-- Options -->
+        <!-- Upload -->
+        <div id="cfg-upload">
+            <div class="file-zone" id="fileZone">
+                <input type="file" id="prohibited_words_file"
+                       accept=".txt,.text" onchange="onWordsSelected(this)">
+                <div class="file-zone-icon">📄</div>
+                <div class="file-zone-label"><strong>Choose a file</strong> or drag and drop</div>
+                <div class="file-zone-hint">.txt — one word per line</div>
+            </div>
+            <div class="file-name" id="wordsName"></div>
+        </div>
+
+        <!-- Server path -->
+        <div id="cfg-server" style="display:none;">
+            <div class="form-group">
+                <label for="config_server_path">
+                    Path on server
+                    <span class="hint">— file or folder containing prohibited_words.txt</span>
+                </label>
+                <input type="text" id="config_server_path"
+                       placeholder="/etc/scanner/config/prohibited_words.txt"
+                       spellcheck="false">
+            </div>
+        </div>
+
+        <!-- Git repo -->
+        <div id="cfg-git" style="display:none;">
+            <div class="form-group">
+                <label for="config_git_url">Config repository URL</label>
+                <input type="url" id="config_git_url"
+                       placeholder="https://github.com/org/config-repo"
+                       autocomplete="url" spellcheck="false"
+                       oninput="checkSameRepo()">
+            </div>
+            <div class="form-group">
+                <label for="config_file_path">
+                    Path to words file within repo
+                    <span class="hint">— defaults to prohibited_words.txt</span>
+                </label>
+                <input type="text" id="config_file_path"
+                       placeholder="prohibited_words.txt"
+                       spellcheck="false">
+            </div>
+            <div class="same-repo-hint" id="sameRepoHint">
+                <span>ℹ</span>
+                <span>Same repository as scan target — the config folder will be excluded from the scan.</span>
+            </div>
+        </div>
+
+        <!-- ── Options ─────────────────────────────────────────────── -->
+        <hr class="section-divider">
         <div class="options-row">
             <div class="form-group">
                 <label for="max_file_size_mb">Max file size (MB)</label>
@@ -542,16 +637,15 @@
 
     function setSourceType(type) {
         currentSource = type;
-        document.getElementById('tab-git').classList.toggle('active', type === 'git');
-        document.getElementById('tab-artifactory').classList.toggle('active', type === 'artifactory');
-        document.getElementById('repo_url').placeholder = URL_PLACEHOLDERS[type];
+        ['git', 'artifactory', 'zip'].forEach(t =>
+            document.getElementById(`tab-${t}`).classList.toggle('active', t === type));
 
-        const artAuth = document.getElementById('artAuth');
-        if (type === 'artifactory') {
-            artAuth.classList.add('visible');
-        } else {
-            artAuth.classList.remove('visible');
-        }
+        const isZip = type === 'zip';
+        document.getElementById('urlGroup').style.display  = isZip ? 'none' : '';
+        document.getElementById('zipGroup').style.display  = isZip ? ''     : 'none';
+        document.getElementById('artAuth').classList.toggle('visible', type === 'artifactory');
+        if (!isZip) document.getElementById('repo_url').placeholder = URL_PLACEHOLDERS[type] || '';
+        checkSameRepo();
     }
 
     /* ── Artifactory auth method ────────────────────────────────────── */
@@ -566,63 +660,134 @@
         });
     }
 
-    /* ── File zone ──────────────────────────────────────────────────── */
-    function onFileSelected(input) {
-        const name = input.files[0] ? input.files[0].name : '';
-        document.getElementById('fileName').textContent = name ? '✓ ' + name : '';
+    /* ── Config source ──────────────────────────────────────────────── */
+    let currentConfigSource = 'upload';
+
+    function setConfigSource(type) {
+        currentConfigSource = type;
+        ['upload', 'server', 'git'].forEach(t =>
+            document.getElementById(`cfg-tab-${t}`).classList.toggle('active', t === type));
+        document.getElementById('cfg-upload').style.display = type === 'upload'      ? '' : 'none';
+        document.getElementById('cfg-server').style.display = type === 'server_path' ? '' : 'none';
+        document.getElementById('cfg-git').style.display    = type === 'git_repo'    ? '' : 'none';
+        checkSameRepo();
     }
 
-    const zone = document.getElementById('fileZone');
-    zone.addEventListener('dragover',  e => { e.preventDefault(); zone.classList.add('drag-over'); });
-    zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
-    zone.addEventListener('drop', e => {
-        e.preventDefault();
-        zone.classList.remove('drag-over');
-        const input = document.getElementById('prohibited_words_file');
-        input.files = e.dataTransfer.files;
-        onFileSelected(input);
-    });
+    /* ── Same-repo hint ─────────────────────────────────────────────── */
+    function normalizeGitUrl(url) {
+        return url.trim().replace(/\/$/, '').replace(/\.git$/, '').toLowerCase();
+    }
+
+    function checkSameRepo() {
+        const hint = document.getElementById('sameRepoHint');
+        const same = currentSource === 'git'
+            && currentConfigSource === 'git_repo'
+            && normalizeGitUrl(document.getElementById('repo_url').value)
+            && normalizeGitUrl(document.getElementById('repo_url').value)
+               === normalizeGitUrl(document.getElementById('config_git_url').value);
+        hint.classList.toggle('visible', same);
+    }
+
+    document.getElementById('repo_url').addEventListener('input', checkSameRepo);
+
+    /* ── File zones ─────────────────────────────────────────────────── */
+    function onWordsSelected(input) {
+        const name = input.files[0] ? input.files[0].name : '';
+        document.getElementById('wordsName').textContent = name ? '✓ ' + name : '';
+    }
+
+    function onZipSelected(input) {
+        const name = input.files[0] ? input.files[0].name : '';
+        document.getElementById('zipName').textContent = name ? '✓ ' + name : '';
+    }
+
+    function bindDropZone(zoneId, inputId, labelId) {
+        const zone = document.getElementById(zoneId);
+        if (!zone) return;
+        zone.addEventListener('dragover',  e => { e.preventDefault(); zone.classList.add('drag-over'); });
+        zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+        zone.addEventListener('drop', e => {
+            e.preventDefault();
+            zone.classList.remove('drag-over');
+            const input = document.getElementById(inputId);
+            input.files = e.dataTransfer.files;
+            document.getElementById(labelId).textContent =
+                input.files[0] ? '✓ ' + input.files[0].name : '';
+        });
+    }
+    bindDropZone('fileZone', 'prohibited_words_file', 'wordsName');
+    bindDropZone('zipZone',  'zip_file',              'zipName');
 
     /* ── Scan ───────────────────────────────────────────────────────── */
     async function runScan() {
-        const repoUrl       = document.getElementById('repo_url').value.trim();
-        const wordsInput    = document.getElementById('prohibited_words_file');
         const caseSensitive = document.getElementById('case_sensitive').checked;
         const maxSize       = document.getElementById('max_file_size_mb').value.trim();
         const resultsDiv    = document.getElementById('results');
         const scanButton    = document.getElementById('scanButton');
 
-        if (!repoUrl) {
-            setResults(alertHtml('error', '⚠️', 'Please enter a repository URL.'));
-            return;
+        // ── Validate scan target ──────────────────────────────────────
+        const repoUrl    = document.getElementById('repo_url').value.trim();
+        const zipInput   = document.getElementById('zip_file');
+
+        if (currentSource !== 'zip' && !repoUrl) {
+            setResults(alertHtml('error', '⚠️', 'Please enter a repository URL.')); return;
         }
-        if (!wordsInput.files.length) {
-            setResults(alertHtml('error', '⚠️', 'Please select a prohibited words file.'));
-            return;
+        if (currentSource === 'zip' && !zipInput.files.length) {
+            setResults(alertHtml('error', '⚠️', 'Please select a ZIP file.')); return;
         }
 
-        const loadingMsg = currentSource === 'artifactory'
-            ? 'Connecting to Artifactory and downloading artifacts…'
-            : 'Cloning repository and scanning…';
+        // ── Validate config source ────────────────────────────────────
+        const wordsInput    = document.getElementById('prohibited_words_file');
+        const serverPath    = document.getElementById('config_server_path').value.trim();
+        const cfgGitUrl     = document.getElementById('config_git_url').value.trim();
 
+        if (currentConfigSource === 'upload' && !wordsInput.files.length) {
+            setResults(alertHtml('error', '⚠️', 'Please select a prohibited words file.')); return;
+        }
+        if (currentConfigSource === 'server_path' && !serverPath) {
+            setResults(alertHtml('error', '⚠️', 'Please enter a server path for the config.')); return;
+        }
+        if (currentConfigSource === 'git_repo' && !cfgGitUrl) {
+            setResults(alertHtml('error', '⚠️', 'Please enter a git URL for the config repository.')); return;
+        }
+
+        // ── Loading state ─────────────────────────────────────────────
+        const loadingMsgs = {
+            git:          'Cloning repository and scanning…',
+            artifactory:  'Connecting to Artifactory and downloading artifacts…',
+            zip:          'Extracting and scanning ZIP…',
+        };
         scanButton.disabled = true;
         scanButton.querySelector('span').textContent = 'Scanning…';
-        setResults(`<div class="loading"><div class="spinner"></div><span>${loadingMsg}</span></div>`);
+        setResults(`<div class="loading"><div class="spinner"></div><span>${loadingMsgs[currentSource]}</span></div>`);
 
+        // ── Build form data ───────────────────────────────────────────
         const formData = new FormData();
-        formData.append('source_type',          currentSource);
-        formData.append('repo_url',             repoUrl);
-        formData.append('prohibited_words_file', wordsInput.files[0]);
-        formData.append('case_sensitive',        caseSensitive ? 'true' : 'false');
-        formData.append('max_file_size_mb',      maxSize || '10');
+        formData.append('source_type',        currentSource);
+        formData.append('config_source_type', currentConfigSource);
+        formData.append('case_sensitive',     caseSensitive ? 'true' : 'false');
+        formData.append('max_file_size_mb',   maxSize || '10');
+
+        if (currentSource !== 'zip') formData.append('repo_url', repoUrl);
+        if (currentSource === 'zip') formData.append('zip_file', zipInput.files[0]);
 
         if (currentSource === 'artifactory') {
-            if (currentAuthMethod === 'apikey') {
+            if (currentAuthMethod === 'apikey')
                 formData.append('art_api_key', document.getElementById('art_api_key').value);
-            } else if (currentAuthMethod === 'basic') {
+            else if (currentAuthMethod === 'basic') {
                 formData.append('art_username', document.getElementById('art_username').value);
                 formData.append('art_password', document.getElementById('art_password').value);
             }
+        }
+
+        if (currentConfigSource === 'upload')
+            formData.append('prohibited_words_file', wordsInput.files[0]);
+        else if (currentConfigSource === 'server_path')
+            formData.append('config_server_path', serverPath);
+        else if (currentConfigSource === 'git_repo') {
+            formData.append('config_git_url',   cfgGitUrl);
+            formData.append('config_file_path',
+                document.getElementById('config_file_path').value.trim() || 'prohibited_words.txt');
         }
 
         try {
@@ -661,9 +826,8 @@
                 html += `</div>`;
             }
 
-            if (data.has_more) {
+            if (data.has_more)
                 html += alertHtml('info', 'ℹ', 'Showing the first 100 results. Export the full scan to see all violations.');
-            }
 
             setResults(html);
         } catch (err) {
@@ -671,8 +835,8 @@
         } finally {
             scanButton.disabled = false;
             scanButton.querySelector('span').textContent = 'Run Scan';
-            wordsInput.value = '';
-            document.getElementById('fileName').textContent = '';
+            if (wordsInput) { wordsInput.value = ''; document.getElementById('wordsName').textContent = ''; }
+            if (zipInput)   { zipInput.value   = ''; document.getElementById('zipName').textContent   = ''; }
         }
     }
 
