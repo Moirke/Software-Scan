@@ -21,8 +21,9 @@ Complete list of all dependencies across the project — runtime, system, infras
 | requests | 2.31.0 | Artifactory HTTP downloads |
 | gunicorn | 21.2.0 | Production WSGI server |
 | fpdf2 | 2.7.9 | PDF report generation (pure Python, no system deps) |
+| coverage | 7.13.4 | Test coverage measurement; used by `ci/Jenkinsfile` and locally |
 
-All other modules used (`os`, `re`, `zipfile`, `tarfile`, `subprocess`, `ipaddress`, `socket`, `tempfile`, `shutil`, `json`, `base64`, `io`, `pathlib`, `multiprocessing`) are Python standard library — no installation required.
+All other modules used (`os`, `re`, `zipfile`, `tarfile`, `subprocess`, `ipaddress`, `socket`, `tempfile`, `shutil`, `json`, `base64`, `io`, `pathlib`, `queue`, `threading`, `multiprocessing`) are Python standard library — no installation required.
 
 ---
 
@@ -43,8 +44,7 @@ All other modules used (`os`, `re`, `zipfile`, `tarfile`, `subprocess`, `ipaddre
 | Component | Version | Why |
 |---|---|---|
 | Docker Engine | 20.10+ | Runs the container (`docker.io` on Ubuntu/Debian) |
-| docker-compose-plugin | any | Local development only (`docker compose up`); not needed on production instances |
-| Container registry | n/a | Stores the built image — ECR, GHCR, Artifact Registry, Docker Hub, or private |
+| docker-compose-plugin | any | Manages the scanner + Nginx stack; used in both local development and on the production VM |
 
 ---
 
@@ -75,9 +75,12 @@ These are not software packages but must be set correctly on whichever LB you us
 
 | Component | Why |
 |---|---|
-| Jenkins | Pipeline runner (`ci/Jenkinsfile*`) |
-| Jenkins Email Extension plugin | `emailext` step used in `post { failure }` blocks |
-| Docker daemon (agent) | Required for `Jenkinsfile.docker`; agent mounts `/var/run/docker.sock` |
+| Jenkins | Pipeline runner (`ci/Jenkinsfile`) |
+| Jenkins Pipeline plugin | Declarative pipeline support; part of Jenkins suggested plugins |
+| Jenkins Git plugin | SCM checkout; part of Jenkins suggested plugins |
+| Jenkins HTML Publisher plugin | Publishes the coverage HTML report as a build sidebar link |
+| Docker daemon (agent) | `docker build`, `docker run`, and `docker save` run directly on the agent; the `jenkins` user must be in the `docker` group |
+| `curl` (agent) | Used by the smoke test stage to hit `/health` on the running container |
 
 ---
 
@@ -85,7 +88,6 @@ These are not software packages but must be set correctly on whichever LB you us
 
 | Secret | How it is used |
 |---|---|
-| Container registry credentials | `docker pull` on instance boot; `docker push` in CI |
 | Git credentials (optional) | Scanning private git repositories via the web UI |
 | Artifactory API key or username/password | Scanning Artifactory paths via the web UI |
 
@@ -96,5 +98,5 @@ These are not software packages but must be set correctly on whichever LB you us
 | Item | Reason |
 |---|---|
 | Database | Scan history is in-memory per-instance; ephemeral by design |
-| Redis / message queue | Scans run synchronously and return results in the HTTP response |
+| Redis / message queue | Scans run in-process; the streaming endpoint uses a `queue.Queue` and background thread but no external broker |
 | Persistent storage (EBS, disks) | All scan work writes to tmpfs and is cleaned up after each request |

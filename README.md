@@ -1,19 +1,17 @@
-# Repository Scanner - Prohibited Words Detector
+# Repository Scanner
 
-A comprehensive tool to scan code repositories for prohibited words, with support for compressed archives (ZIP, TAR, RPM, Docker images) and both CLI and web interfaces.
+Scans code repositories and archives for prohibited words — credentials,
+dev markers, sensitive data — via a web UI, REST API, or CLI.
 
 ## Features
 
-- 🔍 **Deep Scanning**: Searches through code repositories including nested directories
-- 📦 **Archive Support**: Automatically extracts and scans:
-  - ZIP files (.zip)
-  - TAR archives (.tar, .tar.gz, .tgz, .tar.bz2, .tar.xz)
-  - RPM packages (.rpm)
-  - Docker images (tar format)
-- 💻 **Dual Interface**: Command-line tool and web-based UI
-- ⚙️ **Configurable**: Simple YAML/JSON configuration files
-- 🎯 **Word Boundary Matching**: Finds whole words only (avoids false positives)
-- 🚀 **Performance**: Skips binary files and supports file size limits
+- **Deep scanning** — walks directories recursively, extracts and scans archives
+- **Archive support** — ZIP, TAR (all variants), RPM, Docker image tarballs
+- **Dual interface** — web UI for humans, REST API (`/api/v1/`) for pipelines
+- **Exact and partial matching** — word-boundary matches flagged separately from substrings
+- **PDF and JSON export** — shareable reports out of the box
+- **Configurable** — YAML/JSON config, per-scan options (case sensitivity, file size limit, recursion)
+- **Structured logging** — syslog-compatible format, configurable target (file, stdout, syslog)
 
 ## Installation
 
@@ -55,18 +53,27 @@ max_file_size_mb: 10
 
 ### Prohibited Words File
 
-Create a text file with one word per line:
+Three entry formats are supported, one per line:
 
 ```
 # prohibited_words.txt
+
+# Plain word — matched at word boundaries (reported as exact or partial)
 password
 secret
 api_key
 TODO
-FIXME
+
+# Quoted literal — matched as a substring (always reported as partial)
+# Use this to search for text that would otherwise be parsed as a prefix.
+"regex:"
+
+# Regex pattern — compiled and matched as-is (always reported as exact)
+regex:AKIA[0-9A-Z]{16}
+regex:sk-[A-Za-z0-9]{48}
 ```
 
-Lines starting with `#` are treated as comments.
+Lines starting with `#` are treated as comments. Invalid regex patterns are skipped with a warning rather than failing the scan.
 
 ## Usage
 
@@ -231,10 +238,12 @@ The web interface displays:
 
 ### Integrating with CI/CD
 
-Use the CLI in your CI pipeline:
+See [runbooks/ci-cd-integration.md](runbooks/ci-cd-integration.md) for ready-to-use
+Jenkinsfile examples (basic, Docker agent, parameterized warn/fail, and shared library).
+
+Quick bash reference for non-Jenkins pipelines:
 
 ```bash
-#!/bin/bash
 python run-cli.py -c config/config.yaml -r .
 if [ $? -eq 1 ]; then
   echo "Prohibited words found! Build failed."
@@ -283,15 +292,29 @@ Check firewall settings and ensure port 5000 is open.
 - Temporary directories are cleaned up after scanning
 - In production, consider using a database for scan history instead of in-memory storage
 
+## Documentation
+
+### Tutorials (start here)
+
+| Guide | Description |
+|---|---|
+| [Your first scan](tutorials/your-first-scan.md) | Walk through the web UI end to end |
+| [Scanning with the REST API](tutorials/scanning-with-the-rest-api.md) | `curl` examples for all v1 endpoints |
+| [Running with Gunicorn](tutorials/running-with-gunicorn.md) | Production-like local setup |
+| [Deploying to Rocky Linux](tutorials/deploying-to-rocky-linux.md) | Full on-premise VM deployment with Docker + Nginx + TLS |
+| [Setting up the Jenkins pipeline](tutorials/setting-up-the-jenkins-pipeline.md) | Create the build job that produces the Docker image artifact |
+
+### Runbooks (day-to-day operations)
+
+| Runbook | When to use it |
+|---|---|
+| [Upgrade](runbooks/upgrade.md) | Deploy a new build artifact to the VM |
+| [Renew certificates](runbooks/renew-certificates.md) | Annual TLS cert renewal |
+| [Restart service](runbooks/restart-service.md) | Service unresponsive or config changed |
+| [Diagnose scan failure](runbooks/diagnose-scan-failure.md) | Scan errors, hangs, or unexpected results |
+| [CI/CD integration](runbooks/ci-cd-integration.md) | Add a scan step to Jenkins or other CI pipelines |
+| [HTTP-only deployment](runbooks/http-only-deployment.md) | Deploy without TLS on isolated internal networks |
+
 ## License
 
 MIT License - feel free to use and modify as needed.
-
-## Contributing
-
-Contributions welcome! Areas for enhancement:
-- Additional archive format support
-- Regex pattern matching for prohibited words
-- Database backend for web interface
-- REST API expansion
-- Performance optimizations
