@@ -29,24 +29,24 @@ pipeline {
 
         stage('Install dependencies') {
             steps {
-                sh 'pip install --quiet -r requirements.txt'
+                sh 'python3 -m pip install --quiet -r requirements.txt'
             }
         }
 
         stage('Lint') {
             steps {
-                sh 'pylint src/'
+                sh 'python3 -m pylint src/'
             }
         }
 
         stage('Test') {
             steps {
-                sh 'coverage run -m unittest discover tests/'
+                sh 'python3 -m coverage run -m unittest discover tests/'
             }
             post {
                 always {
-                    sh 'coverage report'
-                    sh 'coverage html'
+                    sh 'python3 -m coverage report'
+                    sh 'python3 -m coverage html'
                     publishHTML(target: [
                         allowMissing:          false,
                         alwaysLinkToLastBuild: true,
