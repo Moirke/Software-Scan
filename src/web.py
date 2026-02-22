@@ -1332,7 +1332,7 @@ def v1_suppressions_add():
 
     suppressions = load_suppressions(_SUPPRESSIONS_FILE)
     entry = suppressions.get(fp, {'id': fp})
-    return _v1_ok(entry, meta={}), 201
+    return _v1_ok(entry, status=201)
 
 
 @app.route('/api/v1/suppressions/<fingerprint>', methods=['DELETE'])
