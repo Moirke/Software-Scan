@@ -57,3 +57,8 @@ Things we want to improve but haven't tackled yet, roughly grouped by theme.
 - **Word list management UI** — the prohibited words file is a plain text file
   managed out-of-band. A simple CRUD interface in the web UI would make the
   tool self-contained for non-technical users.
+
+- **Search / filter results** — add a search/filter box to the scan results
+  panel so users can find results by file path, line content, or prohibited
+  word. A previous attempt used a debounced substring match but the UX wasn't
+  satisfying — revisit the interaction model before implementing.
