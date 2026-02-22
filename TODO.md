@@ -36,11 +36,12 @@ Things we want to improve but haven't tackled yet, roughly grouped by theme.
 
 ## Reliability and Scale
 
-- **Async scan jobs** — long-running scans (large repos, slow Artifactory
-  servers) tie up a Gunicorn worker for the full duration. Under load this
-  exhausts the worker pool. The fix is a job queue (Celery + Redis are both
-  self-hostable on the same server) where the API immediately returns a job ID
-  and the client polls for completion.
+- **Async scan jobs** — long-running scans still tie up a Gunicorn worker for
+  the full duration; SSE streaming means the user gets live progress feedback
+  but the underlying worker-per-scan model is unchanged. Under heavy load the
+  worker pool can still be exhausted. A proper fix would be a job queue
+  (Celery + Redis, both self-hostable) where the API returns a job ID
+  immediately and the client polls or streams for completion.
 
 - **Per-scan resource limits** — no cap on how much disk a single scan can
   consume during archive extraction. A very large archive could fill the tmpfs.
