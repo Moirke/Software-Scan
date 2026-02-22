@@ -12,6 +12,7 @@ from src.suppressions import (
     make_fingerprint,
     remove_suppression,
     save_suppressions,
+    serialize_suppressions,
 )
 
 
@@ -185,6 +186,57 @@ class TestAddRemoveSuppressions(unittest.TestCase):
         """remove_suppression returns False when fingerprint is absent."""
         result = remove_suppression(self.path, "deadbeefdeadbeef")
         self.assertFalse(result)
+
+
+class TestSerializeSuppressions(unittest.TestCase):
+
+    def test_serialize_empty_returns_valid_yaml(self):
+        """Empty suppressions dict produces YAML with an empty suppressions list."""
+        import yaml
+        text = serialize_suppressions({})
+        data = yaml.safe_load(text)
+        self.assertIsInstance(data, dict)
+        self.assertIn('suppressions', data)
+        self.assertEqual(data['suppressions'], [])
+
+    def test_serialize_round_trips_through_load(self):
+        """serialize → write to file → load_suppressions returns the same entries."""
+        fp = make_fingerprint("src/a.py", "password = 'x'", "password")
+        entry = {
+            'id':              fp,
+            'file':            'src/a.py',
+            'line_content':    "password = 'x'",
+            'prohibited_word': 'password',
+            'added_at':        '2024-01-01T00:00:00Z',
+        }
+        supps = {fp: entry}
+        text = serialize_suppressions(supps)
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(text)
+            path = f.name
+        try:
+            loaded = load_suppressions(path)
+            self.assertIn(fp, loaded)
+            self.assertEqual(loaded[fp]['file'], 'src/a.py')
+            self.assertEqual(loaded[fp]['prohibited_word'], 'password')
+        finally:
+            os.unlink(path)
+
+    def test_serialize_multiple_entries(self):
+        """All entries are present in the serialised output."""
+        import yaml
+        fp1 = make_fingerprint("a.py", "secret = 'x'", "secret")
+        fp2 = make_fingerprint("b.py", "api_key = 'y'", "api_key")
+        supps = {
+            fp1: {'id': fp1, 'file': 'a.py', 'line_content': "secret = 'x'",  'prohibited_word': 'secret'},
+            fp2: {'id': fp2, 'file': 'b.py', 'line_content': "api_key = 'y'", 'prohibited_word': 'api_key'},
+        }
+        text = serialize_suppressions(supps)
+        data = yaml.safe_load(text)
+        self.assertEqual(len(data['suppressions']), 2)
+        ids = {e['id'] for e in data['suppressions']}
+        self.assertEqual(ids, {fp1, fp2})
 
 
 if __name__ == "__main__":

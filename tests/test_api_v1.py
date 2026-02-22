@@ -760,5 +760,309 @@ class TestV0V1Consistency(V1TestCase):
         self.assertEqual(record['uuid'], data['id'])
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Scan record suppression fields
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestScanRecordSuppressionFields(V1TestCase):
+    """Verify that each scan record carries base_suppressions and session_suppressions."""
+
+    def test_scan_record_has_base_suppressions(self):
+        r = self._post_zip_scan()
+        scan_uuid = self._ok_data(r)['id']
+        record = web_module.scan_store[scan_uuid]
+        self.assertIn('base_suppressions', record)
+        self.assertIsInstance(record['base_suppressions'], dict)
+
+    def test_scan_record_has_session_suppressions(self):
+        r = self._post_zip_scan()
+        scan_uuid = self._ok_data(r)['id']
+        record = web_module.scan_store[scan_uuid]
+        self.assertIn('session_suppressions', record)
+        self.assertIsInstance(record['session_suppressions'], dict)
+
+    def test_base_suppressions_empty_for_upload_config(self):
+        """config_source_type=upload has no folder to read from → empty base."""
+        r = self._post_zip_scan()
+        scan_uuid = self._ok_data(r)['id']
+        record = web_module.scan_store[scan_uuid]
+        self.assertEqual(record['base_suppressions'], {})
+
+    def test_base_suppressions_loaded_from_server_path_config(self):
+        """base_suppressions is populated when suppressions.yaml sits next to words file."""
+        import yaml
+        from src.suppressions import make_fingerprint
+        tmp = tempfile.mkdtemp(prefix='v1_supp_test_')
+        try:
+            # Write words file
+            words_path = os.path.join(tmp, 'prohibited_words.txt')
+            with open(words_path, 'w') as f:
+                f.write('password\n')
+            # Write suppressions.yaml alongside it
+            fp = make_fingerprint('secrets.py', "password = 'hunter2'", 'password')
+            supp_data = {'suppressions': [{'id': fp, 'file': 'secrets.py',
+                                           'line_content': "password = 'hunter2'",
+                                           'prohibited_word': 'password'}]}
+            supp_path = os.path.join(tmp, 'suppressions.yaml')
+            with open(supp_path, 'w') as f:
+                yaml.dump(supp_data, f)
+            # Write repo file
+            repo_tmp = tempfile.mkdtemp(prefix='v1_supp_repo_')
+            try:
+                with open(os.path.join(repo_tmp, 'secrets.py'), 'w') as f:
+                    f.write("password = 'hunter2'\n")
+                body = {
+                    'source_type':        'server_path',
+                    'config_source_type': 'server_path',
+                    'repo_path':          repo_tmp,
+                    'config_server_path': words_path,
+                }
+                r = self._post_scan_json(body)
+                self.assertEqual(r.status_code, 200)
+                data = self._ok_data(r)
+                scan_uuid = data['id']
+                record = web_module.scan_store[scan_uuid]
+                self.assertIn(fp, record['base_suppressions'])
+            finally:
+                shutil.rmtree(repo_tmp, ignore_errors=True)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_suppressed_findings_reduce_total_violations(self):
+        """A finding covered by base_suppressions is excluded from results."""
+        import yaml
+        from src.suppressions import make_fingerprint
+        tmp = tempfile.mkdtemp(prefix='v1_supp_apply_')
+        try:
+            words_path = os.path.join(tmp, 'prohibited_words.txt')
+            with open(words_path, 'w') as f:
+                f.write('password\n')
+            # The finding in secrets.py will be suppressed
+            fp = make_fingerprint('secrets.py', "password = 'hunter2'", 'password')
+            supp_data = {'suppressions': [{'id': fp, 'file': 'secrets.py',
+                                           'line_content': "password = 'hunter2'",
+                                           'prohibited_word': 'password'}]}
+            with open(os.path.join(tmp, 'suppressions.yaml'), 'w') as f:
+                yaml.dump(supp_data, f)
+            repo_tmp = tempfile.mkdtemp(prefix='v1_supp_apply_repo_')
+            try:
+                with open(os.path.join(repo_tmp, 'secrets.py'), 'w') as f:
+                    f.write("password = 'hunter2'\n")
+                body = {
+                    'source_type':        'server_path',
+                    'config_source_type': 'server_path',
+                    'repo_path':          repo_tmp,
+                    'config_server_path': words_path,
+                }
+                r = self._post_scan_json(body)
+                data = self._ok_data(r)
+                self.assertEqual(data['total_violations'], 0)
+                self.assertEqual(data['suppressed_count'], 1)
+            finally:
+                shutil.rmtree(repo_tmp, ignore_errors=True)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# POST /api/v1/suppressions — in-session suppression
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestV1SuppressionsAdd(V1TestCase):
+
+    def _do_scan(self):
+        """Run a dirty scan and return the scan UUID."""
+        r = self._post_zip_scan(_make_zip({'code.py': DIRTY_PY}))
+        return self._ok_data(r)['id']
+
+    def _post_suppression(self, body):
+        return self.client.post(
+            '/api/v1/suppressions',
+            data=json.dumps(body),
+            content_type='application/json',
+        )
+
+    def test_missing_scan_id_returns_400(self):
+        r = self._post_suppression({'file': 'a.py', 'line_content': 'x', 'prohibited_word': 'x'})
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(self._err_body(r)['code'], 'VALIDATION_ERROR')
+
+    def test_unknown_scan_id_returns_404(self):
+        r = self._post_suppression({
+            'scan_id': 'deadbeef-0000-0000-0000-000000000000',
+            'file': 'a.py', 'line_content': 'x', 'prohibited_word': 'x',
+        })
+        self.assertEqual(r.status_code, 404)
+        self.assertEqual(self._err_body(r)['code'], 'NOT_FOUND')
+
+    def test_missing_file_returns_400(self):
+        scan_id = self._do_scan()
+        r = self._post_suppression({'scan_id': scan_id, 'line_content': 'x', 'prohibited_word': 'x'})
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(self._err_body(r)['code'], 'VALIDATION_ERROR')
+
+    def test_missing_line_content_returns_400(self):
+        scan_id = self._do_scan()
+        r = self._post_suppression({'scan_id': scan_id, 'file': 'a.py', 'prohibited_word': 'x'})
+        self.assertEqual(r.status_code, 400)
+
+    def test_missing_prohibited_word_returns_400(self):
+        scan_id = self._do_scan()
+        r = self._post_suppression({'scan_id': scan_id, 'file': 'a.py', 'line_content': 'x'})
+        self.assertEqual(r.status_code, 400)
+
+    def test_valid_request_returns_201(self):
+        scan_id = self._do_scan()
+        r = self._post_suppression({
+            'scan_id': scan_id, 'file': 'code.py',
+            'line_content': "password = 'hunter2'", 'prohibited_word': 'password',
+        })
+        self.assertEqual(r.status_code, 201)
+
+    def test_valid_request_returns_entry_with_id(self):
+        scan_id = self._do_scan()
+        r = self._post_suppression({
+            'scan_id': scan_id, 'file': 'code.py',
+            'line_content': "password = 'hunter2'", 'prohibited_word': 'password',
+        })
+        entry = self._ok_data(r)
+        self.assertIn('id', entry)
+        self.assertEqual(entry['file'], 'code.py')
+        self.assertEqual(entry['prohibited_word'], 'password')
+
+    def test_suppression_stored_in_session_suppressions(self):
+        scan_id = self._do_scan()
+        r = self._post_suppression({
+            'scan_id': scan_id, 'file': 'code.py',
+            'line_content': "password = 'hunter2'", 'prohibited_word': 'password',
+        })
+        entry = self._ok_data(r)
+        fp = entry['id']
+        # Verify it's in the in-memory record
+        record = web_module.scan_store[scan_id]
+        self.assertIn(fp, record['session_suppressions'])
+
+    def test_duplicate_suppression_is_idempotent(self):
+        """Posting the same suppression twice returns 201 both times without duplication."""
+        scan_id = self._do_scan()
+        body = {
+            'scan_id': scan_id, 'file': 'code.py',
+            'line_content': "password = 'hunter2'", 'prohibited_word': 'password',
+        }
+        r1 = self._post_suppression(body)
+        r2 = self._post_suppression(body)
+        self.assertEqual(r1.status_code, 201)
+        self.assertEqual(r2.status_code, 201)
+        record = web_module.scan_store[scan_id]
+        self.assertEqual(len(record['session_suppressions']), 1)
+
+    def test_suppression_not_written_to_global_file(self):
+        """Adding a session suppression must not create or modify the global file."""
+        scan_id = self._do_scan()
+        global_path = web_module._SUPPRESSIONS_FILE
+        existed_before = os.path.exists(global_path)
+        self._post_suppression({
+            'scan_id': scan_id, 'file': 'code.py',
+            'line_content': "password = 'hunter2'", 'prohibited_word': 'password',
+        })
+        if not existed_before:
+            self.assertFalse(os.path.exists(global_path),
+                             'Global suppressions file must not be created by a session suppress')
+
+    def test_reason_stored_when_provided(self):
+        scan_id = self._do_scan()
+        r = self._post_suppression({
+            'scan_id': scan_id, 'file': 'code.py',
+            'line_content': "password = 'hunter2'", 'prohibited_word': 'password',
+            'reason': 'test credential',
+        })
+        entry = self._ok_data(r)
+        self.assertEqual(entry.get('reason'), 'test credential')
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /api/v1/scans/<uuid>/suppressions/export
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestV1SuppressionsExport(V1TestCase):
+
+    def _do_dirty_scan(self):
+        r = self._post_zip_scan(_make_zip({'code.py': DIRTY_PY}))
+        return self._ok_data(r)['id']
+
+    def _add_suppression(self, scan_id):
+        self.client.post(
+            '/api/v1/suppressions',
+            data=json.dumps({
+                'scan_id': scan_id, 'file': 'code.py',
+                'line_content': "password = 'hunter2'", 'prohibited_word': 'password',
+            }),
+            content_type='application/json',
+        )
+
+    def test_export_nonexistent_scan_returns_404(self):
+        r = self.client.get('/api/v1/scans/deadbeef-0000-0000-0000-000000000000/suppressions/export')
+        self.assertEqual(r.status_code, 404)
+
+    def test_export_returns_200(self):
+        scan_id = self._do_dirty_scan()
+        self._add_suppression(scan_id)
+        r = self.client.get(f'/api/v1/scans/{scan_id}/suppressions/export')
+        self.assertEqual(r.status_code, 200)
+
+    def test_export_content_type_is_yaml(self):
+        scan_id = self._do_dirty_scan()
+        self._add_suppression(scan_id)
+        r = self.client.get(f'/api/v1/scans/{scan_id}/suppressions/export')
+        self.assertIn('yaml', r.content_type)
+
+    def test_export_is_valid_yaml_with_suppressions_key(self):
+        import yaml
+        scan_id = self._do_dirty_scan()
+        self._add_suppression(scan_id)
+        r = self.client.get(f'/api/v1/scans/{scan_id}/suppressions/export')
+        data = yaml.safe_load(r.data)
+        self.assertIsInstance(data, dict)
+        self.assertIn('suppressions', data)
+        self.assertIsInstance(data['suppressions'], list)
+
+    def test_export_includes_session_suppression(self):
+        import yaml
+        scan_id = self._do_dirty_scan()
+        self._add_suppression(scan_id)
+        r = self.client.get(f'/api/v1/scans/{scan_id}/suppressions/export')
+        data = yaml.safe_load(r.data)
+        self.assertEqual(len(data['suppressions']), 1)
+        self.assertEqual(data['suppressions'][0]['file'], 'code.py')
+
+    def test_export_merges_base_and_session_suppressions(self):
+        """Merged YAML contains entries from both base_suppressions and session_suppressions."""
+        import yaml
+        from src.suppressions import make_fingerprint
+        # Inject a fake base suppression directly into a scan record
+        scan_id = self._do_dirty_scan()
+        base_fp = make_fingerprint('other.py', 'secret = 1', 'secret')
+        web_module.scan_store[scan_id]['base_suppressions'] = {
+            base_fp: {'id': base_fp, 'file': 'other.py',
+                      'line_content': 'secret = 1', 'prohibited_word': 'secret'},
+        }
+        self._add_suppression(scan_id)
+        r = self.client.get(f'/api/v1/scans/{scan_id}/suppressions/export')
+        data = yaml.safe_load(r.data)
+        ids = {e['id'] for e in data['suppressions']}
+        session_fp = list(web_module.scan_store[scan_id]['session_suppressions'].keys())[0]
+        self.assertIn(base_fp,    ids)
+        self.assertIn(session_fp, ids)
+
+    def test_export_clean_scan_has_empty_suppressions_list(self):
+        """A scan with no suppressions exports a valid YAML with an empty list."""
+        import yaml
+        scan_id = self._do_dirty_scan()  # no suppress call
+        r = self.client.get(f'/api/v1/scans/{scan_id}/suppressions/export')
+        self.assertEqual(r.status_code, 200)
+        data = yaml.safe_load(r.data)
+        self.assertEqual(data['suppressions'], [])
+
+
 if __name__ == '__main__':
     unittest.main()
