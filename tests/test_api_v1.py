@@ -545,6 +545,26 @@ class TestV1ScanResults(V1TestCase):
         for item in data:
             self.assertEqual(item['match_type'], 'partial')
 
+    def test_results_exact_before_partial(self):
+        """Unfiltered results must have all exact matches before any partial match."""
+        # Build a zip with a word that appears both as a whole word and as a substring
+        # so the scan produces both match types.
+        zip_bytes = _make_zip({'a.py': b"password = 1\n", 'b.py': b"mypasswordvalue = 1\n"})
+        r = self._post_zip_scan(zip_bytes, b'password\n')
+        scan_id = json.loads(r.data)['data']['id']
+
+        r2 = self.client.get(f'/api/v1/scans/{scan_id}/results?limit=100')
+        items = self._ok_data(r2)
+        types = [item['match_type'] for item in items]
+        # Once we see a partial, there must be no exact after it
+        seen_partial = False
+        for t in types:
+            if t == 'partial':
+                seen_partial = True
+            if seen_partial:
+                self.assertNotEqual(t, 'exact',
+                    'exact match found after a partial match — ordering is wrong')
+
     def test_results_invalid_pagination_returns_400(self):
         scan_id = self._scan_with_violations()
         r = self.client.get(

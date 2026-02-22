@@ -622,6 +622,9 @@ def _execute_scan_core(
         # Apply suppressions
         results, suppressed_count = apply_suppressions(results, scan_target, base_suppressions)
 
+        # Sort: all exact matches before all partial matches
+        results.sort(key=lambda r: 0 if r.get('match_type') == 'exact' else 1)
+
         exact_count   = sum(1 for r in results if r.get('match_type') == 'exact')
         partial_count = sum(1 for r in results if r.get('match_type') == 'partial')
         files_scanned = len({r['file'] for r in results})
