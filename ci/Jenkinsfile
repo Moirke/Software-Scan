@@ -47,14 +47,6 @@ pipeline {
                 always {
                     sh 'python3 -m coverage report'
                     sh 'python3 -m coverage html'
-                    publishHTML(target: [
-                        allowMissing:          false,
-                        alwaysLinkToLastBuild: true,
-                        keepAll:               true,
-                        reportDir:             'htmlcov',
-                        reportFiles:           'index.html',
-                        reportName:            'Coverage Report',
-                    ])
                 }
             }
         }
