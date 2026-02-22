@@ -443,6 +443,47 @@
         }
         .files-list-badges { display: flex; gap: 5px; margin-left: auto; flex-shrink: 0; }
 
+        /* ── Search bar ─────────────────────────────────────────────── */
+        .search-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 14px;
+        }
+        .search-bar input {
+            flex: 1;
+            padding: 7px 12px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-size: 0.875rem;
+            outline: none;
+            transition: border-color var(--transition), box-shadow var(--transition);
+        }
+        .search-bar input::placeholder { color: var(--text-subtle); }
+        .search-bar input:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-glow);
+        }
+        .search-clear {
+            background: none;
+            border: none;
+            color: var(--text-subtle);
+            cursor: pointer;
+            font-size: 1rem;
+            padding: 4px 6px;
+            border-radius: var(--radius);
+            transition: color var(--transition);
+            line-height: 1;
+        }
+        .search-clear:hover { color: var(--text); }
+        .search-count {
+            font-size: 0.78rem;
+            color: var(--text-subtle);
+            white-space: nowrap;
+        }
+
         .violation {
             background: var(--warn-bg);
             border: 1px solid var(--warn-border);
@@ -986,6 +1027,8 @@
                       //   partialViolations, suppressedCount, hasMore, currentPage }
     let _suppressionBannerShown = false;
     let _activeFilter = 'all'; // 'all' | 'exact' | 'partial' | 'files'
+    let _searchQuery  = '';
+    let _searchTimer  = null;
 
     /* ── Result rendering ───────────────────────────────────────────── */
     function renderGroup(violations, badgeClass) {
@@ -1071,6 +1114,27 @@
         </div>`;
     }
 
+    function _applySearch(results) {
+        if (!_searchQuery) return results;
+        const q = _searchQuery.toLowerCase();
+        return results.filter(r =>
+            (r.relative_file  || r.file  || '').toLowerCase().includes(q) ||
+            (r.line_content   || '').toLowerCase().includes(q) ||
+            (r.prohibited_word || '').toLowerCase().includes(q)
+        );
+    }
+
+    function _searchBar() {
+        const hasQuery = _searchQuery.length > 0;
+        return `<div class="search-bar">
+            <input id="searchInput" type="search" placeholder="Filter results…"
+                   value="${escapeHtml(_searchQuery)}"
+                   oninput="onSearchInput(this.value)"
+                   autocomplete="off" spellcheck="false">
+            ${hasQuery ? `<button class="search-clear" onclick="onSearchInput('')" title="Clear">&#x2715;</button>` : ''}
+        </div>`;
+    }
+
     function _reRenderPage() {
         if (!_scan) return;
         const { currentPage, totalViolations, exactViolations, partialViolations,
@@ -1086,31 +1150,62 @@
         }
         html += _renderStatsBar(totalViolations, exactViolations, partialViolations,
                                 uniqueFiles, suppressedCount);
+        html += _searchBar();
 
         if (_activeFilter === 'files') {
-            html += _renderFilesList(allResults);
+            const searched = _applySearch(allResults);
+            html += _renderFilesList(searched);
         } else {
-            const filtered = _activeFilter === 'exact'   ? allResults.filter(r => r.match_type === 'exact')
-                           : _activeFilter === 'partial' ? allResults.filter(r => r.match_type === 'partial')
-                           : allResults;
-            const filteredTotal = _activeFilter === 'exact'   ? exactViolations
+            const byType = _activeFilter === 'exact'   ? allResults.filter(r => r.match_type === 'exact')
+                         : _activeFilter === 'partial' ? allResults.filter(r => r.match_type === 'partial')
+                         : allResults;
+            const searched = _applySearch(byType);
+            const filteredTotal = _searchQuery ? searched.length
+                                : _activeFilter === 'exact'   ? exactViolations
                                 : _activeFilter === 'partial' ? partialViolations
                                 : totalViolations;
             const totalPages = Math.max(1, Math.ceil(filteredTotal / RESULTS_PER_PAGE));
             const start      = (currentPage - 1) * RESULTS_PER_PAGE;
-            const pageSlice  = filtered.slice(start, start + RESULTS_PER_PAGE);
+            const pageSlice  = searched.slice(start, start + RESULTS_PER_PAGE);
             html += _renderViolationPage(pageSlice);
+            if (_searchQuery) {
+                html += `<div class="search-count">${searched.length} result${searched.length === 1 ? '' : 's'} matching "${escapeHtml(_searchQuery)}"</div>`;
+            }
             html += _buildPagination(currentPage, totalPages);
         }
 
+        // Preserve search input focus/cursor position after re-render
+        const prevInput = document.getElementById('searchInput');
+        const prevStart = prevInput ? prevInput.selectionStart : null;
+        const prevEnd   = prevInput ? prevInput.selectionEnd   : null;
+
         setResults(html);
+
+        if (_searchQuery !== '' || prevInput) {
+            const newInput = document.getElementById('searchInput');
+            if (newInput && document.activeElement === prevInput) {
+                newInput.focus();
+                if (prevStart !== null) {
+                    try { newInput.setSelectionRange(prevStart, prevEnd); } catch (_) {}
+                }
+            }
+        }
     }
 
     async function goToPage(page) {
         if (!_scan) return;
-        const filteredTotal = _activeFilter === 'exact'   ? _scan.exactViolations
-                            : _activeFilter === 'partial' ? _scan.partialViolations
-                            : _scan.totalViolations;
+        // When a search is active all filtering is client-side; compute total from cached results
+        let filteredTotal;
+        if (_searchQuery) {
+            const byType = _activeFilter === 'exact'   ? _scan.allResults.filter(r => r.match_type === 'exact')
+                         : _activeFilter === 'partial' ? _scan.allResults.filter(r => r.match_type === 'partial')
+                         : _scan.allResults;
+            filteredTotal = _applySearch(byType).length;
+        } else {
+            filteredTotal = _activeFilter === 'exact'   ? _scan.exactViolations
+                          : _activeFilter === 'partial' ? _scan.partialViolations
+                          : _scan.totalViolations;
+        }
         const totalPages = Math.max(1, Math.ceil(filteredTotal / RESULTS_PER_PAGE));
         if (page < 1 || page > totalPages) return;
 
@@ -1322,6 +1417,8 @@
         document.getElementById('feedbackWidget').style.display = 'none';
         _suppressionBannerShown = false;
         _activeFilter = 'all';
+        _searchQuery  = '';
+        clearTimeout(_searchTimer);
         const _sb = document.getElementById('suppressionBanner');
         if (_sb) _sb.style.display = 'none';
         showProgress(initMsgs[currentSource] || 'Scanning\u2026');
@@ -1435,6 +1532,15 @@
         else { _activeFilter = filter; }
         if (_scan) _scan.currentPage = 1;
         _reRenderPage();
+    }
+
+    function onSearchInput(val) {
+        clearTimeout(_searchTimer);
+        _searchTimer = setTimeout(() => {
+            _searchQuery = val.trim();
+            if (_scan) _scan.currentPage = 1;
+            _reRenderPage();
+        }, 150);
     }
 
     function _renderFilesList(allResults) {
