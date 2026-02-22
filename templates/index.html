@@ -678,7 +678,7 @@
 
         <!-- ── Config source ───────────────────────────────────────── -->
         <hr class="section-divider">
-        <div class="section-label">Prohibited words source</div>
+        <div class="section-label">Config source</div>
         <div class="tab-bar sm">
             <button class="tab-btn active" id="cfg-tab-upload"
                     onclick="setConfigSource('upload')">Upload file</button>
@@ -705,11 +705,15 @@
             <div class="form-group">
                 <label for="config_server_path">
                     Path on server
-                    <span class="hint">— file or folder containing prohibited_words.txt</span>
+                    <span class="hint">— point to a folder or directly to <code>prohibited_words.txt</code></span>
                 </label>
                 <input type="text" id="config_server_path"
-                       placeholder="/etc/scanner/config/prohibited_words.txt"
+                       placeholder="/etc/scanner/config/"
                        spellcheck="false">
+            </div>
+            <div class="same-repo-hint visible">
+                <span>ℹ</span>
+                <span>The scanner reads <code>prohibited_words.txt</code> from this location. If a <code>suppressions.yaml</code> is present in the same folder it will be applied automatically — no action needed if you don't have one.</span>
             </div>
         </div>
 
@@ -717,15 +721,19 @@
         <div id="cfg-git" style="display:none;">
             <div class="form-group">
                 <label for="config_git_url">
-                    URL to config file or folder
-                    <span class="hint">— include the filename, or point to a folder and we'll look for prohibited_words.txt</span>
+                    Git repository URL
+                    <span class="hint">— point to a folder, or directly to the words file</span>
                 </label>
                 <input type="url" id="config_git_url"
-                       placeholder="https://github.com/org/repo/config/words.txt"
+                       placeholder="https://github.com/org/config-repo"
                        autocomplete="url" spellcheck="false"
                        oninput="checkSameRepo()">
             </div>
-            <div class="same-repo-hint" id="sameRepoHint">
+            <div class="same-repo-hint visible">
+                <span>ℹ</span>
+                <span>The scanner reads <code>prohibited_words.txt</code> from this location. If a <code>suppressions.yaml</code> is present in the same folder it will be applied automatically — no action needed if you don't have one.</span>
+            </div>
+            <div class="same-repo-hint" id="sameRepoHint" style="margin-top:6px;">
                 <span>ℹ</span>
                 <span>Same repository as scan target — the config folder will be excluded from the scan.</span>
             </div>
