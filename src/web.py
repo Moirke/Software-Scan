@@ -1,34 +1,36 @@
 """
 Web Interface for Repository Scanner
 """
-from flask import Flask, render_template, request, jsonify, send_file, Response
-import csv
 import base64
+import csv
 import io
 import ipaddress
+import json
 import logging
 import os
-import json
 import queue
 import shutil
 import socket
 import subprocess
+import tempfile
 import threading
+import time
 import uuid
-import yaml
-import requests
+from datetime import datetime
 from urllib.parse import urlparse, urlunparse
-from src.scanner import ProhibitedWordScanner
-from src.report import generate_pdf
+
+import requests
+import yaml
+from flask import Flask, render_template, request, jsonify, send_file, Response
+
+import src.metrics as metrics
 from src.logging_config import LOGGER_NAME, ScanAdapter
+from src.report import generate_pdf
+from src.scanner import ProhibitedWordScanner
 from src.suppressions import (
     load_suppressions, apply_suppressions,
     add_suppression, remove_suppression, make_fingerprint,
 )
-import src.metrics as metrics
-import tempfile
-import time
-from datetime import datetime
 
 _log = logging.getLogger(LOGGER_NAME)
 

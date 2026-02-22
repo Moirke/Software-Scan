@@ -2,18 +2,18 @@
 Repository Scanner - Core scanning functionality
 Supports searching through code repositories including compressed/archived files
 """
+import json
 import logging
 import os
 import re
-import zipfile
-import tarfile
-import gzip
-import tempfile
 import shutil
+import tarfile
+import tempfile
+import zipfile
 from pathlib import Path
 from typing import List, Dict, Set, Tuple
+
 import yaml
-import json
 
 from src.logging_config import LOGGER_NAME
 
@@ -58,7 +58,7 @@ class ArchiveExtractor:
                 with tarfile.open(image_path, 'r') as tar:
                     tar.extractall(extract_dir)
 
-                for root, dirs, files in os.walk(extract_dir):
+                for root, _, files in os.walk(extract_dir):
                     for file in files:
                         if file.endswith('.tar'):
                             layer_path = os.path.join(root, file)
@@ -204,7 +204,7 @@ class ProhibitedWordScanner:
                 chunk = f.read(8192)
                 if b'\x00' in chunk:  # Null bytes indicate binary
                     return True
-        except:
+        except Exception:
             return True
         
         return False
@@ -392,7 +392,7 @@ class ProhibitedWordScanner:
                     all_results.extend(results)
 
             elif os.path.isdir(path):
-                for root, dirs, files in os.walk(path):
+                for root, _, files in os.walk(path):
                     for file in files:
                         scan_path(os.path.join(root, file), is_extracted, depth)
                     if not recursive and not is_extracted:

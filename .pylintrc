@@ -1,0 +1,42 @@
+[MAIN]
+# Only lint production source; tests and CI are excluded from the gate.
+ignore-paths = ^tests/,^ci/
+
+[FORMAT]
+max-line-length = 120
+
+[MESSAGES CONTROL]
+disable =
+    # Style / naming choices
+    C0103,  # invalid-name: module-level private vars use _lower_case (e.g. metrics counters)
+    C0302,  # too-many-lines: web.py is intentionally a single-file Flask app
+    C0303,  # trailing-whitespace: cosmetic, pre-existing throughout codebase
+    C0325,  # superfluous-parens: style preference
+    R0402,  # consider-using-from-import: style preference
+
+    # Docstrings: not all internal helpers need them
+    C0116,  # missing-function-docstring
+
+    # Conditional / deferred imports (by design)
+    C0415,  # import-outside-toplevel: subprocess, traceback, datetime imported conditionally
+
+    # Complex-but-intentional functions
+    R0902,  # too-many-instance-attributes: ProhibitedWordScanner has 9 (limit 7)
+    R0903,  # too-few-public-methods: small helper/data classes
+    R0911,  # too-many-return-statements: large route handlers
+    R0912,  # too-many-branches: scanner match logic and route handlers
+    R0913,  # too-many-arguments: route handler signatures
+    R0914,  # too-many-local-variables: complex scanning and routing functions
+    R0915,  # too-many-statements: route handlers
+    R0916,  # too-many-boolean-expressions: multi-condition validation
+    R0917,  # too-many-positional-arguments: route handler signatures
+    R1702,  # too-many-nested-blocks: Docker layer extraction
+    R1705,  # no-else-return: style preference
+    R1732,  # consider-using-with: some tempfile handles are intentionally long-lived
+
+    # Intentional exception / subprocess patterns
+    W0603,  # global-statement: metrics module uses module-level counters by design
+    W0707,  # raise-missing-from: chaining not always meaningful here
+    W0718,  # broad-exception-caught: deliberate catch-all in scanner and web layer
+    W1510,  # subprocess-run-check: RPM extractor checks returncode manually
+    W1514,  # unspecified-encoding: pre-existing open() calls; binary reads intentional

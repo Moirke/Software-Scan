@@ -32,6 +32,11 @@ python run-cli.py --config config/config.yaml --repo /path/to/scan
 python run-cli.py -c config/config.yaml -r /path/to/repo -o results.txt --verbose
 ```
 
+**Run linter:**
+```bash
+pylint src/
+```
+
 **Run web server** (accessible at http://localhost:5000):
 ```bash
 python run-web.py

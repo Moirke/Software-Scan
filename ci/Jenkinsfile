@@ -33,6 +33,12 @@ pipeline {
             }
         }
 
+        stage('Lint') {
+            steps {
+                sh 'pylint src/'
+            }
+        }
+
         stage('Test') {
             steps {
                 sh 'coverage run -m unittest discover tests/'
