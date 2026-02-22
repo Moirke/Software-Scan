@@ -1212,33 +1212,42 @@
         const start = (page - 1) * RESULTS_PER_PAGE;
         const end   = start + RESULTS_PER_PAGE;
 
-        // If we already have enough results cached, just re-render
-        if (_scan.allResults.length >= end || !_scan.hasMore) {
+        // Count cached results that match the active filter (not just total cached).
+        // Results are sorted exact-before-partial, so partial results may not be in
+        // the cache even if allResults.length looks sufficient.
+        function cachedFiltered() {
+            if (_activeFilter === 'exact')   return _scan.allResults.filter(r => r.match_type === 'exact').length;
+            if (_activeFilter === 'partial') return _scan.allResults.filter(r => r.match_type === 'partial').length;
+            return _scan.allResults.length;
+        }
+
+        // If we already have enough filtered results cached, just re-render
+        if (cachedFiltered() >= end || !_scan.hasMore) {
             _scan.currentPage = page;
             _reRenderPage();
             document.getElementById('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
             return;
         }
 
-        // Need to fetch from server — we request the specific page from the v1 API
-        // The v1 API paginates independently; we request enough to cover our page
-        const v1Page  = Math.ceil(end / 100);   // v1 uses limit=100 to minimise round-trips
-        const v1Limit = 100;
+        // Fetch from server — loop until we have enough of the filtered type.
+        // We fetch sequential server pages (limit=100) advancing past what we've
+        // already loaded, rather than jumping to a fixed page by absolute position.
         try {
-            const resp = await fetch(
-                `/api/v1/scans/${_scan.uuid}/results?page=${v1Page}&limit=${v1Limit}`
-            );
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const body = await resp.json();
-            // Append new results (avoid duplicates by index)
-            const newItems = body.data || [];
-            const offset   = (v1Page - 1) * v1Limit;
-            newItems.forEach((item, i) => {
-                const idx = offset + i;
-                if (idx >= _scan.allResults.length) _scan.allResults.push(item);
-            });
-            // If this was the last page, mark no more
-            if (v1Page >= (body.meta || {}).total_pages) _scan.hasMore = false;
+            while (cachedFiltered() < end && _scan.hasMore) {
+                const nextPage = Math.ceil((_scan.allResults.length + 1) / 100);
+                const resp = await fetch(
+                    `/api/v1/scans/${_scan.uuid}/results?page=${nextPage}&limit=100`
+                );
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const body    = await resp.json();
+                const newItems = body.data || [];
+                const offset   = (nextPage - 1) * 100;
+                newItems.forEach((item, i) => {
+                    const idx = offset + i;
+                    if (idx >= _scan.allResults.length) _scan.allResults.push(item);
+                });
+                if (nextPage >= (body.meta || {}).total_pages) _scan.hasMore = false;
+            }
         } catch (err) {
             setResults(alertHtml('error', '✖',
                 `<strong>Failed to load page ${page}:</strong> ${escapeHtml(err.message)}`));
@@ -1532,8 +1541,7 @@
     function setFilter(filter) {
         if (_activeFilter === filter) { _activeFilter = 'all'; }
         else { _activeFilter = filter; }
-        if (_scan) _scan.currentPage = 1;
-        _reRenderPage();
+        if (_scan) goToPage(1);
     }
 
     function onSearchInput(val) {
