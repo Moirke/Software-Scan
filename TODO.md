@@ -22,10 +22,6 @@ Things we want to improve but haven't tackled yet, roughly grouped by theme.
 
 
 
-- **Dependency pinning / automated updates** — `requirements.txt` is pinned but
-  not automatically kept current. Renovate is the better fit for on-premise
-  deployments as it can run as a self-hosted service against Bitbucket or
-  GitLab without needing external connectivity.
 
 ---
 
