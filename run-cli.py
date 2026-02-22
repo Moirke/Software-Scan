@@ -10,6 +10,10 @@ import os
 project_root = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, project_root)
 
+# Initialise logging before any other application imports
+from src.logging_config import configure_logging
+configure_logging()
+
 # Import and run CLI
 from src.cli import main
 

@@ -19,6 +19,13 @@ python -m unittest discover tests/
 python -m unittest tests/test_scanner.py
 ```
 
+**Run tests with coverage:**
+```bash
+coverage run -m unittest discover tests/
+coverage report        # terminal summary (fails if below 75%)
+coverage html          # browse htmlcov/index.html for line-by-line detail
+```
+
 **Run CLI scanner:**
 ```bash
 python run-cli.py --config config/config.yaml --repo /path/to/scan
