@@ -3,8 +3,10 @@
 Command Line Interface for Repository Scanner
 """
 import argparse
+import os
 import sys
 from src.scanner import ProhibitedWordScanner
+from src.suppressions import load_suppressions, apply_suppressions
 
 
 def main():
@@ -47,7 +49,12 @@ Examples:
         action='store_true',
         help='Verbose output'
     )
-    
+
+    parser.add_argument(
+        '--suppressions',
+        help='Path to suppressions YAML file (default: suppressions.yaml in the same directory as --config)'
+    )
+
     args = parser.parse_args()
     
     try:
@@ -62,7 +69,19 @@ Examples:
             print("Starting scan...")
         
         results = scanner.scan_directory(args.repo, recursive=not args.no_recursive)
-        
+
+        # Auto-detect or use explicit suppressions file
+        suppressions_path = args.suppressions
+        if not suppressions_path:
+            suppressions_path = os.path.join(
+                os.path.dirname(os.path.abspath(args.config)),
+                'suppressions.yaml'
+            )
+        suppressions = load_suppressions(suppressions_path)
+        results, suppressed_count = apply_suppressions(results, args.repo, suppressions)
+        if suppressed_count and args.verbose:
+            print(f"Note: {suppressed_count} finding(s) suppressed (marked as known/false positive).")
+
         output = scanner.format_results(results)
         
         if args.output:

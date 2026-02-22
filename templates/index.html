@@ -435,6 +435,27 @@
         .violation-word.partial { background: var(--partial-badge); }
         .violation-line { color: var(--warn-code); word-break: break-all; }
 
+        .suppress-btn {
+            margin-left: auto;
+            flex-shrink: 0;
+            padding: 1px 8px;
+            font-size: 0.72rem;
+            font-weight: 600;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: background var(--transition), color var(--transition),
+                        border-color var(--transition);
+        }
+        .suppress-btn:hover:not([disabled]) {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        .suppress-btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+        .violation.suppressed-now { opacity: 0.4; transition: opacity 0.3s; }
+
         .alert {
             display: flex; align-items: flex-start; gap: 10px;
             padding: 14px 16px; border-radius: var(--radius); border-left: 4px solid;
@@ -450,6 +471,25 @@
         @keyframes spin { to { transform: rotate(360deg); } }
 
         .results-heading { font-size: 1rem; font-weight: 700; color: var(--text); margin-bottom: 14px; }
+
+        /* ── Pagination ─────────────────────────────────────────────── */
+        .pagination {
+            display: flex; align-items: center; justify-content: center;
+            gap: 6px; margin-top: 24px; padding-top: 16px;
+            border-top: 1px solid var(--border); flex-wrap: wrap;
+        }
+        .page-btn {
+            min-width: 36px; height: 36px; padding: 0 10px;
+            border: 1px solid var(--border); border-radius: var(--radius);
+            background: var(--surface); color: var(--text-muted);
+            font-size: 0.875rem; font-weight: 500; cursor: pointer;
+            transition: background var(--transition), color var(--transition),
+                        border-color var(--transition);
+        }
+        .page-btn:hover:not([disabled]) { background: var(--accent); color: white; border-color: var(--accent); }
+        .page-btn.active                { background: var(--accent); color: white; border-color: var(--accent); font-weight: 700; }
+        .page-btn[disabled]             { opacity: 0.35; cursor: not-allowed; }
+        .page-info { font-size: 0.82rem; color: var(--text-muted); padding: 0 4px; user-select: none; }
 
         /* ── Metrics panel ──────────────────────────────────────────── */
         .metrics-scope {
@@ -921,7 +961,13 @@
         return data !== null ? { type, data } : null;
     }
 
-    /* ── Result rendering (shared by scan stream and any future callers) */
+    /* ── Pagination state ───────────────────────────────────────────── */
+    const RESULTS_PER_PAGE = 25;
+
+    let _scan = null; // { uuid, scanId, allResults, totalViolations, exactViolations,
+                      //   partialViolations, suppressedCount, hasMore, currentPage }
+
+    /* ── Result rendering ───────────────────────────────────────────── */
     function renderGroup(violations, badgeClass) {
         if (!violations.length) return '';
         const byFile = {};
@@ -931,15 +977,143 @@
             h += `<div class="violation">`;
             h += `<div class="violation-file">📄 ${escapeHtml(file)}</div>`;
             vs.forEach(v => {
+                const fp      = v.fingerprint   || '';
+                const relFile = v.relative_file || file;
                 h += `<div class="violation-row">`;
                 h += `<span class="line-num">line ${v.line_number}</span>`;
                 h += `<span class="violation-word ${badgeClass}">${escapeHtml(v.prohibited_word)}</span>`;
                 h += `<span class="violation-line">${escapeHtml(v.line_content)}</span>`;
+                if (fp) {
+                    h += `<button class="suppress-btn"
+                        data-fp="${escapeHtml(fp)}"
+                        data-file="${escapeHtml(relFile)}"
+                        data-content="${escapeHtml(v.line_content)}"
+                        data-word="${escapeHtml(v.prohibited_word)}"
+                        onclick="suppressFinding(this)">Suppress</button>`;
+                }
                 h += `</div>`;
             });
             h += `</div>`;
         }
         return h;
+    }
+
+    function _renderViolationPage(pageResults) {
+        const exact   = pageResults.filter(r => r.match_type === 'exact');
+        const partial = pageResults.filter(r => r.match_type === 'partial');
+        let h = '';
+        if (exact.length)
+            h += `<div class="results-heading">Exact matches</div>${renderGroup(exact, '')}`;
+        if (partial.length)
+            h += `<div class="results-heading" style="margin-top:${exact.length ? 24 : 0}px">Partial matches</div>${renderGroup(partial, 'partial')}`;
+        return h;
+    }
+
+    function _buildPagination(currentPage, totalPages) {
+        if (totalPages <= 1) return '';
+        let h = `<div class="pagination">`;
+        h += `<button class="page-btn" onclick="goToPage(${currentPage - 1})"
+                ${currentPage === 1 ? 'disabled' : ''}>&#8592;</button>`;
+
+        const pages = _pageRange(currentPage, totalPages);
+        let prev = null;
+        for (const p of pages) {
+            if (prev !== null && p - prev > 1)
+                h += `<span class="page-info">&hellip;</span>`;
+            h += `<button class="page-btn ${p === currentPage ? 'active' : ''}"
+                onclick="goToPage(${p})">${p}</button>`;
+            prev = p;
+        }
+
+        h += `<button class="page-btn" onclick="goToPage(${currentPage + 1})"
+                ${currentPage === totalPages ? 'disabled' : ''}>&#8594;</button>`;
+        h += `<span class="page-info">${currentPage} / ${totalPages}</span>`;
+        h += `</div>`;
+        return h;
+    }
+
+    function _pageRange(current, total) {
+        // Always show: first, last, and a window of ±2 around current
+        const s = new Set([1, total]);
+        for (let p = Math.max(1, current - 2); p <= Math.min(total, current + 2); p++) s.add(p);
+        return [...s].sort((a, b) => a - b);
+    }
+
+    function _renderStatsBar(totalViolations, exactViolations, partialViolations,
+                              uniqueFiles, suppressedCount) {
+        const suppressedCard = suppressedCount > 0 ? statCard(suppressedCount, 'Suppressed') : '';
+        return `<div class="stats-bar">
+            ${statCard(totalViolations,  'Total')}
+            ${statCard(exactViolations,  'Exact')}
+            ${statCard(partialViolations,'Partial')}
+            ${statCard(uniqueFiles,      'Files affected')}
+            ${suppressedCard}
+        </div>`;
+    }
+
+    function _reRenderPage() {
+        if (!_scan) return;
+        const { currentPage, totalViolations, exactViolations, partialViolations,
+                suppressedCount, allResults } = _scan;
+        const totalPages = Math.max(1, Math.ceil(totalViolations / RESULTS_PER_PAGE));
+        const start      = (currentPage - 1) * RESULTS_PER_PAGE;
+        const pageSlice  = allResults.slice(start, start + RESULTS_PER_PAGE);
+
+        const uniqueFiles = new Set(allResults.map(r => r.file)).size;
+
+        let html = `<div class="results-heading">Scan results</div>`;
+        html += _renderStatsBar(totalViolations, exactViolations, partialViolations,
+                                uniqueFiles, suppressedCount);
+        html += _renderViolationPage(pageSlice);
+        html += _buildPagination(currentPage, totalPages);
+
+        setResults(html);
+    }
+
+    async function goToPage(page) {
+        if (!_scan) return;
+        const totalPages = Math.max(1, Math.ceil(_scan.totalViolations / RESULTS_PER_PAGE));
+        if (page < 1 || page > totalPages) return;
+
+        const start = (page - 1) * RESULTS_PER_PAGE;
+        const end   = start + RESULTS_PER_PAGE;
+
+        // If we already have enough results cached, just re-render
+        if (_scan.allResults.length >= end || !_scan.hasMore) {
+            _scan.currentPage = page;
+            _reRenderPage();
+            document.getElementById('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+            return;
+        }
+
+        // Need to fetch from server — we request the specific page from the v1 API
+        // The v1 API paginates independently; we request enough to cover our page
+        const v1Page  = Math.ceil(end / 100);   // v1 uses limit=100 to minimise round-trips
+        const v1Limit = 100;
+        try {
+            const resp = await fetch(
+                `/api/v1/scans/${_scan.uuid}/results?page=${v1Page}&limit=${v1Limit}`
+            );
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const body = await resp.json();
+            // Append new results (avoid duplicates by index)
+            const newItems = body.data || [];
+            const offset   = (v1Page - 1) * v1Limit;
+            newItems.forEach((item, i) => {
+                const idx = offset + i;
+                if (idx >= _scan.allResults.length) _scan.allResults.push(item);
+            });
+            // If this was the last page, mark no more
+            if (v1Page >= (body.meta || {}).total_pages) _scan.hasMore = false;
+        } catch (err) {
+            setResults(alertHtml('error', '✖',
+                `<strong>Failed to load page ${page}:</strong> ${escapeHtml(err.message)}`));
+            return;
+        }
+
+        _scan.currentPage = page;
+        _reRenderPage();
+        document.getElementById('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
     function displayScanResult(data) {
@@ -953,30 +1127,57 @@
             return;
         }
 
-        const uniqueFiles       = new Set(data.results.map(r => r.file)).size;
-        const exactViolations   = data.exact_violations   || 0;
-        const partialViolations = data.partial_violations || 0;
-        const exact             = data.results.filter(r => r.match_type === 'exact');
-        const partial           = data.results.filter(r => r.match_type === 'partial');
+        _scan = {
+            uuid:             data.scan_uuid || '',
+            scanId:           data.scan_id,
+            allResults:       data.results || [],
+            totalViolations:  data.total_violations,
+            exactViolations:  data.exact_violations   || 0,
+            partialViolations: data.partial_violations || 0,
+            suppressedCount:  data.suppressed_count   || 0,
+            hasMore:          data.has_more || false,
+            currentPage:      1,
+        };
 
-        let html = `<div class="results-heading">Scan results</div>`;
-        html += `<div class="stats-bar">
-            ${statCard(data.total_violations, 'Total')}
-            ${statCard(exactViolations,       'Exact')}
-            ${statCard(partialViolations,     'Partial')}
-            ${statCard(uniqueFiles,           'Files affected')}
-        </div>`;
-
-        if (exact.length)
-            html += `<div class="results-heading">Exact matches</div>${renderGroup(exact, '')}`;
-        if (partial.length)
-            html += `<div class="results-heading" style="margin-top:24px">Partial matches</div>${renderGroup(partial, 'partial')}`;
-
-        if (data.has_more)
-            html += alertHtml('info', 'ℹ', 'Showing the first 100 results. Export the full scan to see all violations.');
-
-        setResults(html);
+        _reRenderPage();
         showFeedbackWidget(data.scan_id);
+    }
+
+    /* ── Suppress finding ───────────────────────────────────────────── */
+    async function suppressFinding(btn) {
+        const row = btn.closest('.violation-row');
+        btn.disabled = true;
+        btn.textContent = 'Suppressing…';
+        try {
+            const resp = await fetch('/api/v1/suppressions', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    file:           btn.dataset.file,
+                    line_content:   btn.dataset.content,
+                    prohibited_word: btn.dataset.word,
+                    reason:         '',
+                }),
+            });
+            if (resp.status === 201) {
+                btn.textContent = 'Suppressed';
+                if (row) {
+                    row.style.opacity         = '0.4';
+                    row.style.textDecoration  = 'line-through';
+                    row.style.transition      = 'opacity 0.3s';
+                }
+            } else {
+                const body = await resp.json().catch(() => ({}));
+                const msg  = (body.error && body.error.message) || 'Could not suppress finding';
+                alert(msg);
+                btn.disabled    = false;
+                btn.textContent = 'Suppress';
+            }
+        } catch (err) {
+            alert('Network error: ' + err.message);
+            btn.disabled    = false;
+            btn.textContent = 'Suppress';
+        }
     }
 
     /* ── Scan ───────────────────────────────────────────────────────── */

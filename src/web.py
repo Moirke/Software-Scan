@@ -20,6 +20,10 @@ from urllib.parse import urlparse, urlunparse
 from src.scanner import ProhibitedWordScanner
 from src.report import generate_pdf
 from src.logging_config import LOGGER_NAME, ScanAdapter
+from src.suppressions import (
+    load_suppressions, apply_suppressions,
+    add_suppression, remove_suppression, make_fingerprint,
+)
 import src.metrics as metrics
 import tempfile
 import time
@@ -43,6 +47,9 @@ _scan_semaphore = threading.Semaphore(_SCAN_CONCURRENCY_LIMIT)
 
 # Feedback log — written to a host-mounted volume in Docker deployments
 _FEEDBACK_FILE = os.environ.get('FEEDBACK_FILE', '/feedback/feedback.log')
+
+# Suppressions file — operators can override with SUPPRESSIONS_FILE env var
+_SUPPRESSIONS_FILE = os.environ.get('SUPPRESSIONS_FILE', 'config/suppressions.yaml')
 
 
 class _InMemoryFile:
@@ -365,6 +372,25 @@ def _resolve_words_file(config_source_type: str, upload, server_path: str,
     return words_path, None
 
 
+# ── Finding enrichment ─────────────────────────────────────────────────────
+
+def _enrich_findings(results: list, repo_root: str) -> list:
+    """
+    Add ``fingerprint`` and ``relative_file`` to each finding dict in-place.
+    Returns the same list (mutated).
+    """
+    for r in results:
+        try:
+            rel = os.path.relpath(r['file'], repo_root)
+        except ValueError:
+            rel = r['file']
+        r['relative_file'] = rel
+        r['fingerprint'] = make_fingerprint(
+            rel, r.get('line_content', ''), r.get('prohibited_word', '')
+        )
+    return results
+
+
 # ── Core scan execution ────────────────────────────────────────────────────
 
 def _execute_scan_core(
@@ -531,13 +557,20 @@ def _execute_scan_core(
         words_evaluated = list(scanner.prohibited_words)
         scanner.cleanup()
 
+        # Enrich findings with fingerprint + relative_file
+        _enrich_findings(results, scan_target)
+
+        # Apply suppressions
+        suppressions = load_suppressions(_SUPPRESSIONS_FILE)
+        results, suppressed_count = apply_suppressions(results, scan_target, suppressions)
+
         exact_count   = sum(1 for r in results if r.get('match_type') == 'exact')
         partial_count = sum(1 for r in results if r.get('match_type') == 'partial')
         files_scanned = len({r['file'] for r in results})
 
         slog.info(
-            'scan_completed files_scanned=%d violations=%d exact=%d partial=%d',
-            files_scanned, len(results), exact_count, partial_count,
+            'scan_completed files_scanned=%d violations=%d exact=%d partial=%d suppressed=%d',
+            files_scanned, len(results), exact_count, partial_count, suppressed_count,
         )
 
         return {
@@ -552,6 +585,7 @@ def _execute_scan_core(
             'total_violations':  len(results),
             'exact_violations':  exact_count,
             'partial_violations': partial_count,
+            'suppressed_count':  suppressed_count,
             'results':           results,
         }
 
@@ -662,9 +696,11 @@ def scan():
         return jsonify({
             'success':            True,
             'scan_id':            record['id'],
+            'scan_uuid':          scan_uuid,
             'total_violations':   record['total_violations'],
             'exact_violations':   record['exact_violations'],
             'partial_violations': record['partial_violations'],
+            'suppressed_count':   record.get('suppressed_count', 0),
             'results':            results[:100],
             'has_more':           len(results) > 100,
         })
@@ -802,9 +838,11 @@ def scan_stream():
             event_q.put(('complete', {
                 'success':            True,
                 'scan_id':            record['id'],
+                'scan_uuid':          scan_uuid,
                 'total_violations':   record['total_violations'],
                 'exact_violations':   record['exact_violations'],
                 'partial_violations': record['partial_violations'],
+                'suppressed_count':   record.get('suppressed_count', 0),
                 'results':            results[:100],
                 'has_more':           len(results) > 100,
             }))
@@ -1111,6 +1149,7 @@ def v1_scans_post():
         pmeta['duration_ms'] = duration_ms
 
         data = _v1_scan_record(record)
+        data['suppressed_count'] = record.get('suppressed_count', 0)
         data['results'] = page_items
         return _v1_ok(data, meta=pmeta)
 
@@ -1203,6 +1242,58 @@ def v1_export_pdf(scan_uuid):
     filename  = f"scan_{scan_uuid[:8]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
     return send_file(io.BytesIO(pdf_bytes), mimetype='application/pdf',
                      as_attachment=True, download_name=filename)
+
+
+# ── v1: suppressions ───────────────────────────────────────────────────────
+
+@app.route('/api/v1/suppressions', methods=['GET'])
+def v1_suppressions_list():
+    """List all suppression entries."""
+    suppressions = load_suppressions(_SUPPRESSIONS_FILE)
+    return _v1_ok(list(suppressions.values()))
+
+
+@app.route('/api/v1/suppressions', methods=['POST'])
+def v1_suppressions_add():
+    """
+    Add a suppression.
+    Body: {"file": str, "line_content": str, "prohibited_word": str, "reason": str}
+    """
+    body = request.get_json(silent=True) or {}
+    rel_file      = str(body.get('file',           '')).strip()
+    line_content  = str(body.get('line_content',   '')).strip()
+    prohibited_word = str(body.get('prohibited_word', '')).strip()
+    reason        = str(body.get('reason',         '')).strip()
+
+    if not rel_file:
+        return _v1_err('VALIDATION_ERROR', 'file is required', 400)
+    if not line_content:
+        return _v1_err('VALIDATION_ERROR', 'line_content is required', 400)
+    if not prohibited_word:
+        return _v1_err('VALIDATION_ERROR', 'prohibited_word is required', 400)
+
+    try:
+        fp = add_suppression(_SUPPRESSIONS_FILE, rel_file, line_content, prohibited_word, reason)
+    except Exception as exc:
+        _log.error('suppression_add_failed error=%r', str(exc))
+        return _v1_err('SERVER_ERROR', str(exc), 500)
+
+    suppressions = load_suppressions(_SUPPRESSIONS_FILE)
+    entry = suppressions.get(fp, {'id': fp})
+    return _v1_ok(entry, meta={}), 201
+
+
+@app.route('/api/v1/suppressions/<fingerprint>', methods=['DELETE'])
+def v1_suppressions_delete(fingerprint):
+    """Remove a suppression by fingerprint. Returns 204 No Content."""
+    try:
+        found = remove_suppression(_SUPPRESSIONS_FILE, fingerprint)
+    except Exception as exc:
+        _log.error('suppression_remove_failed error=%r', str(exc))
+        return _v1_err('SERVER_ERROR', str(exc), 500)
+    if not found:
+        return _v1_err('NOT_FOUND', f'Suppression {fingerprint} not found', 404)
+    return '', 204
 
 
 # ── Feedback ───────────────────────────────────────────────────────────────
