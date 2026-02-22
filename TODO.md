@@ -20,10 +20,6 @@ Things we want to improve but haven't tackled yet, roughly grouped by theme.
   SAML IdP via an Nginx auth proxy, or a shared API key header for pipeline
   integrations.
 
-- **Rate limiting** — a concurrency cap of 5 simultaneous scans is in place
-  (returns 429 when exceeded), but there is no per-IP or per-user throttle.
-  A single client could still saturate all 5 slots. Needs a per-IP limit,
-  either in Nginx or a middleware layer.
 
 - **Container image scanning** — the Docker image we build is not scanned for
   OS-level CVEs. Add a Trivy or Snyk stage to `ci/Jenkinsfile` so vulnerable
