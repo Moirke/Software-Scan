@@ -21,9 +21,6 @@ Things we want to improve but haven't tackled yet, roughly grouped by theme.
   integrations.
 
 
-- **Container image scanning** — the Docker image we build is not scanned for
-  OS-level CVEs. Add a Trivy or Snyk stage to `ci/Jenkinsfile` so vulnerable
-  base images are caught before the artifact is archived.
 
 - **Dependency pinning / automated updates** — `requirements.txt` is pinned but
   not automatically kept current. Renovate is the better fit for on-premise
