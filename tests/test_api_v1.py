@@ -5,6 +5,7 @@ All scan operations use source_type=zip so tests never need a network
 connection or a real git server.  The config is always supplied via an
 in-memory upload (config_source_type=upload).
 """
+import csv
 import io
 import json
 import os
@@ -645,6 +646,90 @@ class TestV1ExportPdf(V1TestCase):
         cd = r2.headers.get('Content-Disposition', '')
         self.assertIn('attachment', cd)
         self.assertIn('.pdf', cd)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /api/v1/scans/<uuid>/export.csv
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestV1ExportCsv(V1TestCase):
+
+    def _parse_csv(self, data: bytes) -> list:
+        return list(csv.DictReader(io.StringIO(data.decode('utf-8'))))
+
+    def _scan_dirty(self) -> str:
+        """Submit a scan with violations and return the UUID."""
+        r = self._post_zip_scan(_make_zip({'code.py': DIRTY_PY}))
+        return json.loads(r.data)['data']['id']
+
+    def test_export_csv_returns_200(self):
+        scan_id = self._scan_dirty()
+        r = self.client.get(f'/api/v1/scans/{scan_id}/export.csv')
+        self.assertEqual(r.status_code, 200)
+
+    def test_export_csv_content_type(self):
+        scan_id = self._scan_dirty()
+        r = self.client.get(f'/api/v1/scans/{scan_id}/export.csv')
+        self.assertIn('text/csv', r.content_type)
+
+    def test_export_csv_download_name(self):
+        scan_id = self._scan_dirty()
+        r = self.client.get(f'/api/v1/scans/{scan_id}/export.csv')
+        cd = r.headers.get('Content-Disposition', '')
+        self.assertIn('attachment', cd)
+        self.assertIn('.csv', cd)
+
+    def test_export_csv_has_expected_columns(self):
+        scan_id = self._scan_dirty()
+        r = self.client.get(f'/api/v1/scans/{scan_id}/export.csv')
+        rows = self._parse_csv(r.data)
+        self.assertTrue(rows)
+        for col in ('file', 'line_number', 'prohibited_word',
+                    'match_type', 'position', 'line_content'):
+            self.assertIn(col, rows[0], f'Missing column: {col}')
+
+    def test_export_csv_row_count_matches_violations(self):
+        r = self._post_zip_scan(_make_zip({'code.py': DIRTY_PY}))
+        body = json.loads(r.data)
+        scan_id = body['data']['id']
+        total   = body['data']['total_violations']
+        csv_r = self.client.get(f'/api/v1/scans/{scan_id}/export.csv')
+        rows = self._parse_csv(csv_r.data)
+        self.assertEqual(len(rows), total)
+
+    def test_export_csv_clean_scan_header_only(self):
+        r = self._post_zip_scan(_make_zip({'code.py': CLEAN_PY}))
+        scan_id = json.loads(r.data)['data']['id']
+        csv_r = self.client.get(f'/api/v1/scans/{scan_id}/export.csv')
+        self.assertEqual(csv_r.status_code, 200)
+        rows = self._parse_csv(csv_r.data)
+        self.assertEqual(rows, [])
+
+    def test_export_csv_contains_all_results_not_capped(self):
+        """CSV must include all violations, not just the first page."""
+        files = {f'file_{i}.py': DIRTY_PY for i in range(101)}
+        r = self._post_zip_scan(_make_zip(files))
+        scan_id = json.loads(r.data)['data']['id']
+        csv_r = self.client.get(f'/api/v1/scans/{scan_id}/export.csv')
+        rows = self._parse_csv(csv_r.data)
+        self.assertGreater(len(rows), 100)
+
+    def test_export_csv_nonexistent_returns_404(self):
+        r = self.client.get(
+            '/api/v1/scans/00000000-0000-0000-0000-000000000000/export.csv')
+        self.assertEqual(r.status_code, 404)
+        err = self._err_body(r)
+        self.assertEqual(err['code'], 'NOT_FOUND')
+
+    def test_export_csv_violation_data_correct(self):
+        scan_id = self._scan_dirty()
+        csv_r = self.client.get(f'/api/v1/scans/{scan_id}/export.csv')
+        rows = self._parse_csv(csv_r.data)
+        self.assertTrue(rows)
+        row = rows[0]
+        self.assertIn('password', row['prohibited_word'])
+        self.assertTrue(row['line_number'].isdigit())
+        self.assertIn(row['match_type'], ('exact', 'partial'))
 
 
 # ══════════════════════════════════════════════════════════════════════════════

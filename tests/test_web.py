@@ -4,6 +4,7 @@ Comprehensive tests for the web API (src/web.py).
 All scan operations use source_type=zip so tests never need a network
 connection or a real git server.
 """
+import csv
 import io
 import json
 import os
@@ -864,6 +865,166 @@ class TestFeedback(WebTestCase):
         with open(self._feedback_file, encoding='utf-8') as f:
             entry = json.loads(f.readline())
         self.assertIn('timestamp', entry)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# _results_to_csv helper — unit tests
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestResultsToCsvHelper(unittest.TestCase):
+    """Direct unit tests for the _results_to_csv() helper function."""
+
+    def setUp(self):
+        from src.web import _results_to_csv
+        self._fn = _results_to_csv
+
+    def _parse(self, buf: io.BytesIO) -> list:
+        buf.seek(0)
+        return list(csv.DictReader(io.StringIO(buf.read().decode('utf-8'))))
+
+    def test_empty_results_produces_header_only(self):
+        buf = self._fn({'results': []})
+        rows = self._parse(buf)
+        self.assertEqual(rows, [])
+        buf.seek(0)
+        header = buf.read().decode('utf-8').splitlines()[0]
+        self.assertIn('file', header)
+        self.assertIn('prohibited_word', header)
+
+    def test_one_result_produces_one_data_row(self):
+        record = {'results': [{
+            'file': '/repo/app.py', 'line_number': 5,
+            'line_content': "password = 'x'", 'prohibited_word': 'password',
+            'position': 0, 'match_type': 'exact',
+        }]}
+        rows = self._parse(self._fn(record))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['file'], '/repo/app.py')
+        self.assertEqual(rows[0]['prohibited_word'], 'password')
+        self.assertEqual(rows[0]['match_type'], 'exact')
+        self.assertEqual(rows[0]['line_number'], '5')
+
+    def test_all_expected_columns_present(self):
+        record = {'results': [{
+            'file': 'f.py', 'line_number': 1, 'line_content': 'x',
+            'prohibited_word': 'x', 'position': 0, 'match_type': 'exact',
+        }]}
+        rows = self._parse(self._fn(record))
+        for col in ('file', 'line_number', 'prohibited_word',
+                    'match_type', 'position', 'line_content'):
+            self.assertIn(col, rows[0], f'Missing column: {col}')
+
+    def test_line_content_with_comma_escaped_correctly(self):
+        """Values containing commas must be quoted so the CSV stays parseable."""
+        record = {'results': [{
+            'file': 'f.py', 'line_number': 1,
+            'line_content': 'a, b, c', 'prohibited_word': 'a',
+            'position': 0, 'match_type': 'exact',
+        }]}
+        rows = self._parse(self._fn(record))
+        self.assertEqual(rows[0]['line_content'], 'a, b, c')
+
+    def test_multiple_results_all_present(self):
+        record = {'results': [
+            {'file': 'a.py', 'line_number': 1, 'line_content': "password = 'x'",
+             'prohibited_word': 'password', 'position': 0, 'match_type': 'exact'},
+            {'file': 'b.py', 'line_number': 2, 'line_content': 'secret val',
+             'prohibited_word': 'secret', 'position': 0, 'match_type': 'partial'},
+        ]}
+        rows = self._parse(self._fn(record))
+        self.assertEqual(len(rows), 2)
+
+    def test_returns_bytes_io(self):
+        buf = self._fn({'results': []})
+        self.assertIsInstance(buf, io.BytesIO)
+
+    def test_missing_results_key_produces_header_only(self):
+        """A record with no 'results' key should not raise."""
+        buf = self._fn({})
+        rows = self._parse(buf)
+        self.assertEqual(rows, [])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CSV export — legacy route  GET /api/export/<id>/csv
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestCsvExport(WebTestCase):
+
+    def _parse_csv(self, data: bytes) -> list:
+        return list(csv.DictReader(io.StringIO(data.decode('utf-8'))))
+
+    def test_csv_returns_200_for_valid_scan(self):
+        r = self._scan_zip(_make_zip({'f.py': DIRTY_PY}))
+        scan_id = r.get_json()['scan_id']
+        csv_r = self.client.get(f'/api/export/{scan_id}/csv')
+        self.assertEqual(csv_r.status_code, 200)
+
+    def test_csv_content_type(self):
+        r = self._scan_zip(_make_zip({'f.py': DIRTY_PY}))
+        scan_id = r.get_json()['scan_id']
+        csv_r = self.client.get(f'/api/export/{scan_id}/csv')
+        self.assertIn('text/csv', csv_r.content_type)
+
+    def test_csv_download_name_has_csv_extension(self):
+        r = self._scan_zip(_make_zip({'f.py': DIRTY_PY}))
+        scan_id = r.get_json()['scan_id']
+        csv_r = self.client.get(f'/api/export/{scan_id}/csv')
+        cd = csv_r.headers.get('Content-Disposition', '')
+        self.assertIn('attachment', cd)
+        self.assertIn('.csv', cd)
+
+    def test_csv_has_expected_header_columns(self):
+        r = self._scan_zip(_make_zip({'f.py': DIRTY_PY}))
+        scan_id = r.get_json()['scan_id']
+        csv_r = self.client.get(f'/api/export/{scan_id}/csv')
+        rows = self._parse_csv(csv_r.data)
+        self.assertTrue(rows, 'Expected at least one data row')
+        for col in ('file', 'line_number', 'prohibited_word',
+                    'match_type', 'position', 'line_content'):
+            self.assertIn(col, rows[0], f'Missing column: {col}')
+
+    def test_csv_row_count_matches_violations(self):
+        r = self._scan_zip(_make_zip({'f.py': DIRTY_PY}))
+        data = r.get_json()
+        scan_id = data['scan_id']
+        total = data['total_violations']
+        csv_r = self.client.get(f'/api/export/{scan_id}/csv')
+        rows = self._parse_csv(csv_r.data)
+        self.assertEqual(len(rows), total)
+
+    def test_csv_for_clean_scan_has_header_only(self):
+        r = self._scan_zip(_make_zip({'f.py': CLEAN_PY}))
+        scan_id = r.get_json()['scan_id']
+        csv_r = self.client.get(f'/api/export/{scan_id}/csv')
+        self.assertEqual(csv_r.status_code, 200)
+        rows = self._parse_csv(csv_r.data)
+        self.assertEqual(rows, [])
+
+    def test_csv_contains_all_results_not_capped_at_100(self):
+        """CSV export must include every violation, not just the first 100."""
+        files = {f'file_{i}.py': DIRTY_PY for i in range(101)}
+        r = self._scan_zip(_make_zip(files))
+        scan_id = r.get_json()['scan_id']
+        csv_r = self.client.get(f'/api/export/{scan_id}/csv')
+        rows = self._parse_csv(csv_r.data)
+        self.assertGreater(len(rows), 100)
+
+    def test_csv_404_for_unknown_scan(self):
+        csv_r = self.client.get('/api/export/99999/csv')
+        self.assertEqual(csv_r.status_code, 404)
+
+    def test_csv_violation_fields_correct(self):
+        """Spot-check that the actual violation data is correct in each row."""
+        r = self._scan_zip(_make_zip({'app.py': DIRTY_PY}))
+        scan_id = r.get_json()['scan_id']
+        csv_r = self.client.get(f'/api/export/{scan_id}/csv')
+        rows = self._parse_csv(csv_r.data)
+        self.assertTrue(rows)
+        row = rows[0]
+        self.assertIn('password', row['prohibited_word'])
+        self.assertTrue(row['line_number'].isdigit())
+        self.assertIn(row['match_type'], ('exact', 'partial'))
 
 
 if __name__ == '__main__':
