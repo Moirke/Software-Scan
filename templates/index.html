@@ -431,17 +431,6 @@
         .stat-num   { font-size: 2.2rem; font-weight: 700; color: var(--stat-num); line-height: 1.1; }
         .stat-label { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-subtle); margin-top: 4px; }
 
-        .files-list { display: flex; flex-direction: column; gap: 6px; }
-        .files-list-item {
-            display: flex; align-items: center; gap: 12px;
-            background: var(--warn-bg);
-            border: 1px solid var(--warn-border);
-            border-left: 4px solid var(--warn-border);
-            border-radius: var(--radius);
-            padding: 10px 14px;
-            font-size: 0.85rem; font-weight: 600; word-break: break-all;
-        }
-        .files-list-badges { display: flex; gap: 5px; margin-left: auto; flex-shrink: 0; }
 
         .violation {
             background: var(--warn-bg);
@@ -996,7 +985,7 @@
     let _activeFilter = 'all'; // 'all' | 'exact' | 'partial' | 'files'
 
     /* ── Result rendering ───────────────────────────────────────────── */
-    function renderGroup(violations, badgeClass) {
+    function renderGroup(violations, badgeClass, collapsed = false) {
         if (!violations.length) return '';
         const byFile = {};
         violations.forEach(r => { (byFile[r.file] = byFile[r.file] || []).push(r); });
@@ -1004,8 +993,8 @@
         for (const [file, vs] of Object.entries(byFile)) {
             h += `<div class="violation">`;
             h += `<div class="violation-file" onclick="toggleViolationGroup(this)">` +
-                 `<span class="violation-toggle">&#9660;</span>📄 ${escapeHtml(file)}</div>`;
-            h += `<div class="violation-rows">`;
+                 `<span class="violation-toggle">${collapsed ? '&#9654;' : '&#9660;'}</span>📄 ${escapeHtml(file)}</div>`;
+            h += `<div class="violation-rows"${collapsed ? ' style="display:none"' : ''}>`;
             vs.forEach(v => {
                 const fp      = v.fingerprint   || '';
                 const relFile = v.relative_file || file;
@@ -1099,7 +1088,12 @@
                                 uniqueFiles, suppressedCount);
 
         if (_activeFilter === 'files') {
-            html += _renderFilesList(allResults);
+            const exact   = allResults.filter(r => r.match_type === 'exact');
+            const partial = allResults.filter(r => r.match_type === 'partial');
+            if (exact.length)
+                html += `<div class="results-heading">Exact matches</div>${renderGroup(exact, '', true)}`;
+            if (partial.length)
+                html += `<div class="results-heading" style="margin-top:${exact.length ? 24 : 0}px">Partial matches</div>${renderGroup(partial, 'partial', true)}`;
         } else {
             const filtered = _activeFilter === 'exact'   ? allResults.filter(r => r.match_type === 'exact')
                            : _activeFilter === 'partial' ? allResults.filter(r => r.match_type === 'partial')
@@ -1464,29 +1458,6 @@
         if (_activeFilter === filter) { _activeFilter = 'all'; }
         else { _activeFilter = filter; }
         if (_scan) goToPage(1);
-    }
-
-    function _renderFilesList(allResults) {
-        const byFile = {};
-        allResults.forEach(r => {
-            if (!byFile[r.file]) byFile[r.file] = { rel: r.relative_file || r.file, exact: 0, partial: 0 };
-            if (r.match_type === 'exact') byFile[r.file].exact++;
-            else byFile[r.file].partial++;
-        });
-        const entries = Object.values(byFile);
-        if (!entries.length) return '';
-        let h = '<div class="files-list">';
-        for (const f of entries) {
-            const badges = [];
-            if (f.exact)   badges.push(`<span class="violation-word">${f.exact} exact</span>`);
-            if (f.partial) badges.push(`<span class="violation-word partial">${f.partial} partial</span>`);
-            h += `<div class="files-list-item">
-                <span>📄 ${escapeHtml(f.rel)}</span>
-                <span class="files-list-badges">${badges.join('')}</span>
-            </div>`;
-        }
-        h += '</div>';
-        return h;
     }
 
     function escapeHtml(text) {
