@@ -52,17 +52,6 @@ Things we want to improve but haven't tackled yet, roughly grouped by theme.
 
 ---
 
-## Observability
-
-- **Scan audit trail** — if a compliance team ever asks "was repo X clean on
-  date Y?", today we have no answer. The in-memory scan history is intentionally
-  ephemeral, but a lightweight write-only audit log would satisfy compliance
-  requirements without changing the stateless architecture. On-premise options:
-  append to a structured log file picked up by the SIEM, or write to a local
-  SQLite or Postgres database on the same host.
-
----
-
 ## Features
 
 - **Word list management UI** — the prohibited words file is a plain text file
