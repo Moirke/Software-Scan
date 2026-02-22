@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scanner Statistics</title>
+    <style>
+        /* ── Theme tokens ───────────────────────────────────────────── */
+        :root {
+            --bg:              #f0f2f8;
+            --surface:         #ffffff;
+            --surface-alt:     #f7f8fc;
+            --border:          #dde1ed;
+            --text:            #1c1e2e;
+            --text-muted:      #6b7280;
+            --text-subtle:     #9ca3af;
+            --accent:          #5a67d8;
+            --accent-hover:    #4c51bf;
+            --accent-glow:     rgba(90, 103, 216, 0.25);
+            --stat-num:        #5a67d8;
+            --shadow-sm:       0 1px 3px rgba(0,0,0,0.08);
+            --shadow-md:       0 4px 16px rgba(0,0,0,0.10);
+            --radius:          8px;
+            --radius-lg:       12px;
+            --transition:      0.2s ease;
+        }
+
+        [data-theme="dark"] {
+            --bg:              #0d0f1a;
+            --surface:         #161929;
+            --surface-alt:     #1e2235;
+            --border:          #2a2f4a;
+            --text:            #e2e4f0;
+            --text-muted:      #8b90a8;
+            --text-subtle:     #555c7a;
+            --accent:          #7c85f3;
+            --accent-hover:    #9098f5;
+            --accent-glow:     rgba(124, 133, 243, 0.30);
+            --stat-num:        #a5abf8;
+            --shadow-sm:       0 1px 3px rgba(0,0,0,0.4);
+            --shadow-md:       0 4px 16px rgba(0,0,0,0.45);
+        }
+
+        /* ── Reset & base ───────────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Ubuntu, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            line-height: 1.6;
+            transition: background var(--transition), color var(--transition);
+        }
+
+        .page {
+            max-width: 860px;
+            margin: 0 auto;
+            padding: 32px 20px 60px;
+        }
+
+        /* ── Header ─────────────────────────────────────────────────── */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 28px;
+        }
+
+        .header-title h1 { font-size: 1.7rem; font-weight: 700; letter-spacing: -0.02em; }
+        .header-title p  { font-size: 0.9rem; color: var(--text-muted); margin-top: 2px; }
+
+        #themeToggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            padding: 6px 14px;
+            font-size: 0.82rem;
+            font-weight: 500;
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: background var(--transition), border-color var(--transition),
+                        color var(--transition), box-shadow var(--transition);
+            box-shadow: var(--shadow-sm);
+            white-space: nowrap;
+        }
+        #themeToggle:hover { color: var(--text); border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+        .theme-icon { font-size: 1rem; line-height: 1; }
+
+        /* ── Card ───────────────────────────────────────────────────── */
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-md);
+            padding: 28px;
+            margin-bottom: 20px;
+            transition: background var(--transition), border-color var(--transition);
+        }
+
+        .card-title {
+            font-size: 0.75rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--text-subtle);
+            margin-bottom: 18px;
+        }
+
+        /* ── Metrics ────────────────────────────────────────────────── */
+        .metrics-scope {
+            font-size: 0.7rem; font-weight: 400; letter-spacing: 0.04em;
+            color: var(--text-subtle); background: var(--surface-alt);
+            border: 1px solid var(--border); border-radius: 999px;
+            padding: 1px 7px; margin-left: 8px; vertical-align: middle;
+        }
+        .metrics-updated { font-size: 0.75rem; color: var(--text-subtle); }
+
+        .metrics-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+
+        .metric-chip {
+            flex: 1; min-width: 100px;
+            background: var(--surface-alt);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 10px 14px;
+            text-align: center;
+        }
+        .metric-chip-num   { font-size: 1.6rem; font-weight: 700; color: var(--stat-num); line-height: 1.1; }
+        .metric-chip-label { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-subtle); margin-top: 3px; }
+
+        .metrics-detail { display: flex; gap: 24px; flex-wrap: wrap; font-size: 0.82rem; color: var(--text-muted); }
+        .metrics-detail span { white-space: nowrap; }
+        .metrics-detail strong { color: var(--text); }
+
+        .metrics-bar { margin-top: 12px; }
+        .metrics-bar-label { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-subtle); margin-bottom: 6px; }
+        .day-rows { display: flex; flex-direction: column; gap: 3px; }
+        .day-row  { display: flex; align-items: center; gap: 8px; font-size: 0.78rem; }
+        .day-date { color: var(--text-subtle); min-width: 80px; }
+        .day-bar-wrap { flex: 1; background: var(--surface-alt); border-radius: 999px; height: 8px; overflow: hidden; }
+        .day-bar      { height: 100%; background: var(--accent); border-radius: 999px; transition: width 0.4s ease; min-width: 2px; }
+        .day-count    { color: var(--text-muted); min-width: 24px; text-align: right; }
+
+        .metrics-loading { color: var(--text-subtle); font-size: 0.85rem; padding: 8px 0; }
+
+        /* ── Raw JSON card ──────────────────────────────────────────── */
+        .raw-json {
+            font-family: 'SF Mono', 'Fira Code', 'Menlo', monospace;
+            font-size: 0.78rem;
+            color: var(--text-muted);
+            white-space: pre;
+            overflow-x: auto;
+            line-height: 1.6;
+        }
+    </style>
+</head>
+<body>
+<div class="page">
+
+    <div class="header">
+        <div class="header-title">
+            <h1>Scanner Statistics</h1>
+            <p>Process-scoped, resets on restart &mdash; scrape <code>/api/metrics</code> for monitoring</p>
+        </div>
+        <button id="themeToggle" onclick="toggleTheme()" aria-label="Toggle theme">
+            <span class="theme-icon" id="themeIcon">🌙</span>
+            <span id="themeLabel">Dark mode</span>
+        </button>
+    </div>
+
+    <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+            <div class="card-title" style="margin-bottom:0">Live statistics
+                <span class="metrics-scope">this instance</span>
+            </div>
+            <span class="metrics-updated" id="metricsUpdated"></span>
+        </div>
+        <div id="metricsBody">
+            <div class="metrics-loading">Loading&hellip;</div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">Raw JSON &mdash; <code>/api/metrics</code></div>
+        <pre id="rawJson" class="raw-json">Loading&hellip;</pre>
+    </div>
+
+</div>
+
+<script>
+    /* ── Theme ──────────────────────────────────────────────────────── */
+    function applyTheme(theme) {
+        document.documentElement.setAttribute('data-theme', theme);
+        const dark = theme === 'dark';
+        document.getElementById('themeIcon').textContent  = dark ? '☀️' : '🌙';
+        document.getElementById('themeLabel').textContent = dark ? 'Light mode' : 'Dark mode';
+    }
+    function toggleTheme() {
+        const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+        applyTheme(next);
+        localStorage.setItem('scannerTheme', next);
+    }
+    (function () {
+        const saved = localStorage.getItem('scannerTheme');
+        if (saved) { applyTheme(saved); }
+        else if (window.matchMedia('(prefers-color-scheme: dark)').matches) { applyTheme('dark'); }
+    })();
+
+    /* ── Metrics ────────────────────────────────────────────────────── */
+    function metricChip(value, label) {
+        return `<div class="metric-chip">
+            <div class="metric-chip-num">${value}</div>
+            <div class="metric-chip-label">${label}</div>
+        </div>`;
+    }
+
+    function renderMetrics(d) {
+        const src    = d.source_type_counts || {};
+        const days   = d.scans_last_7_days  || {};
+        const maxDay = Math.max(1, ...Object.values(days));
+
+        const durSec = d.avg_scan_duration_ms >= 1000
+            ? (d.avg_scan_duration_ms / 1000).toFixed(1) + ' s'
+            : d.avg_scan_duration_ms + ' ms';
+
+        const srcParts = ['git', 'artifactory', 'zip', 'server_path']
+            .filter(k => (src[k] || 0) > 0)
+            .map(k => `<strong>${src[k]}</strong> ${k}`)
+            .join('  ·  ') || '<em>none yet</em>';
+
+        const dayRows = Object.entries(days).reverse().map(([dt, n]) => `
+            <div class="day-row">
+                <span class="day-date">${dt}</span>
+                <div class="day-bar-wrap">
+                    <div class="day-bar" style="width:${Math.round(n / maxDay * 100)}%"></div>
+                </div>
+                <span class="day-count">${n}</span>
+            </div>`).join('');
+
+        document.getElementById('metricsBody').innerHTML = `
+            <div class="metrics-row">
+                ${metricChip(d.page_views,             'Page views')}
+                ${metricChip(d.scans_today,            'Scans today')}
+                ${metricChip(d.scans_started,          'Total scans')}
+                ${metricChip(d.success_rate_pct + '%', 'Success rate')}
+            </div>
+            <div class="metrics-detail">
+                <span>Avg scan time: <strong>${durSec}</strong></span>
+                <span>Violations found: <strong>${d.total_violations_found}</strong></span>
+                <span>Completed: <strong>${d.scans_completed}</strong></span>
+                <span>Failed: <strong>${d.scans_failed}</strong></span>
+                <span>By source: ${srcParts}</span>
+            </div>
+            ${dayRows ? `
+            <div class="metrics-bar">
+                <div class="metrics-bar-label">Scans per day</div>
+                <div class="day-rows">${dayRows}</div>
+            </div>` : ''}`;
+
+        document.getElementById('rawJson').textContent = JSON.stringify(d, null, 2);
+        document.getElementById('metricsUpdated').textContent =
+            'Updated ' + new Date().toLocaleTimeString();
+    }
+
+    async function loadMetrics() {
+        try {
+            const data = await fetch('/api/metrics').then(r => r.json());
+            renderMetrics(data);
+        } catch (_) {
+            document.getElementById('metricsBody').innerHTML =
+                '<div class="metrics-loading">Could not load metrics</div>';
+        }
+    }
+
+    loadMetrics();
+    setInterval(loadMetrics, 30000);
+</script>
+</body>
+</html>

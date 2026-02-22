@@ -662,6 +662,12 @@ def index():
     return render_template('index.html')
 
 
+@app.route('/stats')
+def stats():
+    """Live statistics page (process-scoped, for ops use)."""
+    return render_template('stats.html')
+
+
 @app.route('/api/scan', methods=['POST'])
 def scan():
     """Perform a scan — git repo, Artifactory path, server path, or uploaded ZIP."""
