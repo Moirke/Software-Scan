@@ -2,6 +2,7 @@
 Repository Scanner - Core scanning functionality
 Supports searching through code repositories including compressed/archived files
 """
+from __future__ import annotations
 import json
 import logging
 import os

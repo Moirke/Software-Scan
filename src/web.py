@@ -1,6 +1,7 @@
 """
 Web Interface for Repository Scanner
 """
+from __future__ import annotations
 import base64
 import csv
 import io
