@@ -87,6 +87,8 @@ class ProhibitedWordScanner:
         '.rpm': 'extract_rpm',
     }
     
+    MAX_ARCHIVE_DEPTH = 10  # maximum levels of nested archive extraction
+
     BINARY_EXTENSIONS = {
         '.exe', '.dll', '.so', '.dylib', '.bin', '.class', 
         '.pyc', '.pyo', '.o', '.a', '.lib', '.obj',
@@ -358,7 +360,7 @@ class ProhibitedWordScanner:
         scanned_files = set()
         files_scanned = 0
 
-        def scan_path(path: str, is_extracted: bool = False):
+        def scan_path(path: str, is_extracted: bool = False, depth: int = 0):
             nonlocal files_scanned
             if self._is_excluded(path):
                 return
@@ -370,9 +372,16 @@ class ProhibitedWordScanner:
 
                 is_archive, fmt = self._is_archive(path)
                 if is_archive:
-                    self._log.info('archive_extracting path=%s format=%s', path, fmt or 'unknown')
+                    if depth >= self.MAX_ARCHIVE_DEPTH:
+                        self._log.warning(
+                            'archive_depth_limit_reached path=%s depth=%d limit=%d',
+                            path, depth, self.MAX_ARCHIVE_DEPTH,
+                        )
+                        return
+                    self._log.info('archive_extracting path=%s format=%s depth=%d',
+                                   path, fmt or 'unknown', depth)
                     extract_dir = self._extract_archive(path)
-                    scan_path(extract_dir, is_extracted=True)
+                    scan_path(extract_dir, is_extracted=True, depth=depth + 1)
                 else:
                     if on_progress is not None:
                         on_progress(files_scanned, path)
@@ -383,7 +392,7 @@ class ProhibitedWordScanner:
             elif os.path.isdir(path):
                 for root, dirs, files in os.walk(path):
                     for file in files:
-                        scan_path(os.path.join(root, file), is_extracted)
+                        scan_path(os.path.join(root, file), is_extracted, depth)
                     if not recursive and not is_extracted:
                         break
 

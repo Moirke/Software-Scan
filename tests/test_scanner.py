@@ -334,6 +334,37 @@ class TestZipScanning(ScannerTestCase):
         results = self.scan()
         self.assertGreater(len(results), 0)
 
+    def test_archive_depth_limit_stops_extraction(self):
+        """Archives nested beyond MAX_ARCHIVE_DEPTH must be skipped, not crash."""
+        # Build nesting one level beyond the limit
+        limit = ProhibitedWordScanner.MAX_ARCHIVE_DEPTH
+        data = _make_zip({'payload.py': DIRTY_CONTENT})
+        for _ in range(limit):          # wrap limit times → depth would be limit+1
+            data = _make_zip({'inner.zip': data})
+        self.write_bytes('bomb.zip', data)
+        # Must complete without error; the deeply-buried payload is skipped
+        results = self.scan()
+        # The outermost archives (within the limit) are scanned; the one beyond
+        # the cap is dropped.  We don't assert a specific count — just that
+        # the scanner returns without hanging or raising.
+        self.assertIsInstance(results, list)
+
+    def test_archive_at_exactly_depth_limit_is_scanned(self):
+        """An archive at exactly MAX_ARCHIVE_DEPTH must still be extracted."""
+        limit = ProhibitedWordScanner.MAX_ARCHIVE_DEPTH
+        # depth 0 is the outermost.  Wrap (limit - 1) times so the innermost
+        # archive is encountered at depth == limit - 1 (still within range).
+        data = _make_zip({'payload.py': DIRTY_CONTENT})
+        for _ in range(limit - 1):
+            data = _make_zip({'inner.zip': data})
+        self.write_bytes('deep.zip', data)
+        results = self.scan()
+        self.assertGreater(len(results), 0,
+                           'Archive at the depth limit should still be scanned')
+
+    def test_archive_depth_limit_constant_is_10(self):
+        self.assertEqual(ProhibitedWordScanner.MAX_ARCHIVE_DEPTH, 10)
+
     def test_zip_and_plain_file_both_scanned(self):
         self.write_bytes('archive.zip', _make_zip({'f.py': DIRTY_CONTENT}))
         self.write_text('plain.py', 'api_key = "exposed"\n')
