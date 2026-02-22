@@ -17,6 +17,7 @@ import tempfile
 import threading
 import time
 import uuid
+import zipfile
 from datetime import datetime
 from urllib.parse import urlparse, urlunparse
 
@@ -336,9 +337,29 @@ def _resolve_words_file(config_source_type: str, upload, server_path: str,
     is True (server_path case — the file belongs to the server, don't delete it).
     """
     if config_source_type == 'upload':
-        with tempfile.NamedTemporaryFile(mode='wb', suffix='.txt', delete=False) as f:
-            upload.save(f)
-            return f.name, None
+        filename = getattr(upload, 'filename', '') or ''
+        if filename.lower().endswith('.zip'):
+            extract_dir = tempfile.mkdtemp(prefix='repo_scanner_cfg_zip_')
+            try:
+                buf = io.BytesIO()
+                upload.save(buf)
+                buf.seek(0)
+                with zipfile.ZipFile(buf) as zf:
+                    zf.extractall(extract_dir)
+            except Exception:
+                shutil.rmtree(extract_dir, ignore_errors=True)
+                raise ValueError('Could not read the uploaded ZIP file')
+            words_src = os.path.join(extract_dir, 'prohibited_words.txt')
+            if not os.path.isfile(words_src):
+                shutil.rmtree(extract_dir, ignore_errors=True)
+                raise ValueError('ZIP must contain prohibited_words.txt at the root level')
+            with tempfile.NamedTemporaryFile(mode='wb', suffix='.txt', delete=False) as f:
+                shutil.copy2(words_src, f.name)
+                return f.name, extract_dir   # caller reads suppressions.yaml then cleans up
+        else:
+            with tempfile.NamedTemporaryFile(mode='wb', suffix='.txt', delete=False) as f:
+                upload.save(f)
+                return f.name, None
 
     if config_source_type == 'server_path':
         path = server_path.strip()
@@ -550,7 +571,11 @@ def _execute_scan_core(
                 candidate = None
             if candidate:
                 base_suppressions = load_suppressions(candidate)
-        # 'upload' source type: no folder to infer from → empty suppressions
+        elif config_source_type == 'upload':
+            if config_clone_dir:   # a ZIP was uploaded; extract_dir still holds suppressions.yaml
+                base_suppressions = load_suppressions(
+                    os.path.join(config_clone_dir, 'suppressions.yaml')
+                )
         # Clean up config clone dir now that we've read everything from it
         if config_clone_dir:
             shutil.rmtree(config_clone_dir, ignore_errors=True)

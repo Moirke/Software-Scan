@@ -13,6 +13,7 @@ import shutil
 import tempfile
 import unittest
 import zipfile
+import yaml
 
 from src import web as web_module
 from src.web import app
@@ -758,6 +759,85 @@ class TestV0V1Consistency(V1TestCase):
         self.assertEqual(r2.status_code, 200)
         record = json.loads(r2.data)
         self.assertEqual(record['uuid'], data['id'])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ZIP config bundle upload
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestZipConfigUpload(V1TestCase):
+
+    def _make_config_zip(self, files: dict) -> bytes:
+        """Build a config ZIP in memory. files: {name: str|bytes}"""
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w') as zf:
+            for name, content in files.items():
+                if isinstance(content, str):
+                    content = content.encode()
+                zf.writestr(name, content)
+        return buf.getvalue()
+
+    def _post_zip_config_scan(self, config_zip: bytes, scan_zip: bytes = None) -> object:
+        if scan_zip is None:
+            scan_zip = _make_zip({'code.py': CLEAN_PY})
+        data = {
+            'source_type':           'zip',
+            'config_source_type':    'upload',
+            'zip_file':              (io.BytesIO(scan_zip),    'scan.zip'),
+            'prohibited_words_file': (io.BytesIO(config_zip),  'config.zip'),
+            'case_sensitive':        'false',
+            'max_file_size_mb':      '10',
+        }
+        return self.client.post('/api/v1/scans', data=data,
+                                content_type='multipart/form-data')
+
+    def test_zip_with_words_only_succeeds(self):
+        config_zip = self._make_config_zip({'prohibited_words.txt': WORDS_FILE_BYTES})
+        r = self._post_zip_config_scan(config_zip)
+        self.assertEqual(r.status_code, 200)
+
+    def test_zip_with_words_only_has_empty_base_suppressions(self):
+        config_zip = self._make_config_zip({'prohibited_words.txt': WORDS_FILE_BYTES})
+        r = self._post_zip_config_scan(config_zip)
+        scan_uuid = self._ok_data(r)['id']
+        self.assertEqual(web_module.scan_store[scan_uuid]['base_suppressions'], {})
+
+    def test_zip_with_words_finds_violations(self):
+        config_zip = self._make_config_zip({'prohibited_words.txt': WORDS_FILE_BYTES})
+        r = self._post_zip_config_scan(config_zip, _make_zip({'code.py': DIRTY_PY}))
+        self.assertGreater(self._ok_data(r)['total_violations'], 0)
+
+    def test_zip_with_words_and_suppressions_loads_both(self):
+        """suppressions.yaml from the config ZIP is loaded into base_suppressions."""
+        from src.suppressions import make_fingerprint
+        fp = make_fingerprint('code.py', "password = 'hunter2'", 'password')
+        supp_yaml = yaml.dump({'suppressions': [
+            {'id': fp, 'file': 'code.py',
+             'line_content': "password = 'hunter2'", 'prohibited_word': 'password'}
+        ]})
+        config_zip = self._make_config_zip({
+            'prohibited_words.txt': WORDS_FILE_BYTES,
+            'suppressions.yaml':    supp_yaml,
+        })
+        r = self._post_zip_config_scan(config_zip)
+        scan_uuid = self._ok_data(r)['id']
+        self.assertIn(fp, web_module.scan_store[scan_uuid]['base_suppressions'])
+
+    def test_zip_missing_words_file_returns_422(self):
+        config_zip = self._make_config_zip({'suppressions.yaml': 'suppressions: []\n'})
+        r = self._post_zip_config_scan(config_zip)
+        self.assertEqual(r.status_code, 422)
+        self.assertEqual(self._err_body(r)['code'], 'SCAN_FAILED')
+
+    def test_invalid_zip_returns_422(self):
+        r = self._post_zip_config_scan(b'this is not a zip file')
+        self.assertEqual(r.status_code, 422)
+
+    def test_suppressions_yaml_in_zip_is_optional(self):
+        """A ZIP with only prohibited_words.txt must not fail due to absent suppressions."""
+        config_zip = self._make_config_zip({'prohibited_words.txt': b'password\n'})
+        r = self._post_zip_config_scan(config_zip)
+        self.assertEqual(r.status_code, 200)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

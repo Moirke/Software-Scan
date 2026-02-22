@@ -692,12 +692,16 @@
         <div id="cfg-upload">
             <div class="file-zone" id="fileZone">
                 <input type="file" id="prohibited_words_file"
-                       accept=".txt,.text" onchange="onWordsSelected(this)">
+                       accept=".txt,.text,.zip" onchange="onWordsSelected(this)">
                 <div class="file-zone-icon">📄</div>
                 <div class="file-zone-label"><strong>Choose a file</strong> or drag and drop</div>
-                <div class="file-zone-hint">.txt — one word per line</div>
+                <div class="file-zone-hint">.txt word list &nbsp;·&nbsp; or a .zip bundle</div>
             </div>
             <div class="file-name" id="wordsName"></div>
+            <div class="same-repo-hint visible" style="margin-top:8px;">
+                <span>ℹ</span>
+                <span>Upload a plain <code>.txt</code> file (one word per line), or a <code>.zip</code> containing <code>prohibited_words.txt</code> and optionally <code>suppressions.yaml</code> at the root level.</span>
+            </div>
         </div>
 
         <!-- Server path -->
@@ -1258,7 +1262,7 @@
         const cfgGitUrl  = document.getElementById('config_git_url').value.trim();
 
         if (currentConfigSource === 'upload' && !wordsInput.files.length) {
-            setResults(alertHtml('error', '⚠️', 'Please select a prohibited words file.')); return;
+            setResults(alertHtml('error', '⚠️', 'Please select a .txt word list or a .zip config bundle.')); return;
         }
         if (currentConfigSource === 'server_path' && !serverPath) {
             setResults(alertHtml('error', '⚠️', 'Please enter a server path for the config.')); return;
