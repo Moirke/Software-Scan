@@ -141,6 +141,21 @@ The web interface provides:
 | RPM | .rpm | Requires rpm2cpio and cpio |
 | Docker Images | .tar (with "docker" in name) | Extracts all layers |
 
+### Nesting Depth Limit
+
+Archives may contain other archives (e.g. a ZIP that contains a TAR that contains another ZIP).
+To prevent runaway extraction from consuming all available disk space and CPU, the scanner limits
+extraction to **10 levels of nesting**.
+
+- Archives nested beyond level 10 are skipped with a log warning (`archive_depth_limit_reached`).
+- The CLI prints a warning to stderr when any archives were skipped due to the limit.
+- The web UI shows a warning banner in the results panel when the limit was hit.
+- The API includes a `depth_limit_hits` field in every scan response indicating how many archives
+  were skipped.
+
+If you encounter this limit with a legitimate repository, consider pre-extracting the deeply
+nested archives and scanning the extracted contents directly.
+
 ### Docker Image Scanning
 
 Docker images saved as TAR files are automatically detected and all layers are extracted and scanned.

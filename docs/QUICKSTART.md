@@ -61,6 +61,10 @@ FIXME
 - ✅ RPM (.rpm) - requires rpm2cpio
 - ✅ Docker images (.tar with "docker" in filename)
 
+Archives nested inside other archives are extracted and scanned automatically, up to a maximum
+depth of **10 levels**. Archives beyond this limit are skipped; the CLI will print a warning to
+stderr and the web UI will show a banner when this occurs.
+
 ## Exit Codes (CLI)
 
 - `0` - No violations found

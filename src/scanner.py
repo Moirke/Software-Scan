@@ -109,6 +109,7 @@ class ProhibitedWordScanner:
             for p in self.config.get('excluded_paths', [])
         ]
         self.temp_dirs = []
+        self.depth_limit_hits = 0   # archives skipped due to MAX_ARCHIVE_DEPTH
         
     def _load_config(self, config_path: str) -> Dict:
         """Load configuration from YAML or JSON file"""
@@ -377,6 +378,7 @@ class ProhibitedWordScanner:
                             'archive_depth_limit_reached path=%s depth=%d limit=%d',
                             path, depth, self.MAX_ARCHIVE_DEPTH,
                         )
+                        self.depth_limit_hits += 1
                         return
                     self._log.info('archive_extracting path=%s format=%s depth=%d',
                                    path, fmt or 'unknown', depth)

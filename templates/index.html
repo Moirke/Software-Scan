@@ -1058,7 +1058,7 @@
     function _reRenderPage() {
         if (!_scan) return;
         const { currentPage, totalViolations, exactViolations, partialViolations,
-                suppressedCount, allResults } = _scan;
+                suppressedCount, depthLimitHits, allResults } = _scan;
         const totalPages = Math.max(1, Math.ceil(totalViolations / RESULTS_PER_PAGE));
         const start      = (currentPage - 1) * RESULTS_PER_PAGE;
         const pageSlice  = allResults.slice(start, start + RESULTS_PER_PAGE);
@@ -1066,6 +1066,11 @@
         const uniqueFiles = new Set(allResults.map(r => r.file)).size;
 
         let html = `<div class="results-heading">Scan results</div>`;
+        if (depthLimitHits > 0) {
+            html += alertHtml('warn', '⚠',
+                `<strong>${depthLimitHits} archive${depthLimitHits === 1 ? '' : 's'} skipped</strong> — ` +
+                `the maximum nesting depth (10 levels) was reached. Results may be incomplete.`);
+        }
         html += _renderStatsBar(totalViolations, exactViolations, partialViolations,
                                 uniqueFiles, suppressedCount);
         html += _renderViolationPage(pageSlice);
@@ -1143,6 +1148,7 @@
             exactViolations:  data.exact_violations   || 0,
             partialViolations: data.partial_violations || 0,
             suppressedCount:  data.suppressed_count   || 0,
+            depthLimitHits:   data.depth_limit_hits   || 0,
             hasMore:          data.has_more || false,
             currentPage:      1,
         };

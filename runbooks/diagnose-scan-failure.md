@@ -87,6 +87,28 @@ file_skipped_size path=... size_mb=... limit_mb=...
 Not a failure — just informational.  If you need those files scanned,
 increase `max_file_size_mb` in the scan request.
 
+### Archive nesting depth limit reached
+
+```
+archive_depth_limit_reached path=... depth=10 limit=10
+```
+
+The scanner limits archive-in-archive extraction to 10 levels deep.  Archives
+beyond this limit are skipped and results for their contents will be absent.
+
+**CLI:** a warning is printed to stderr:
+> Warning: N archive(s) were skipped because the nesting depth limit of 10 was
+> reached. Results may be incomplete.
+
+**Web UI:** a warning banner appears in the results panel.
+
+**API:** the scan response includes `"depth_limit_hits": N`.
+
+If the skipped archives contain content that must be scanned, pre-extract them
+manually and scan the extracted directory directly.
+
+---
+
 ### Disk full during archive extraction
 
 ```

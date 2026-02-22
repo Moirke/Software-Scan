@@ -558,6 +558,8 @@ def _execute_scan_core(
         words_evaluated = list(scanner.prohibited_words)
         scanner.cleanup()
 
+        depth_limit_hits = scanner.depth_limit_hits
+
         # Enrich findings with fingerprint + relative_file
         _enrich_findings(results, scan_target)
 
@@ -569,9 +571,16 @@ def _execute_scan_core(
         partial_count = sum(1 for r in results if r.get('match_type') == 'partial')
         files_scanned = len({r['file'] for r in results})
 
+        if depth_limit_hits:
+            slog.warning(
+                'archive_depth_limit_reached_count count=%d limit=%d',
+                depth_limit_hits, scanner.MAX_ARCHIVE_DEPTH,
+            )
+
         slog.info(
-            'scan_completed files_scanned=%d violations=%d exact=%d partial=%d suppressed=%d',
-            files_scanned, len(results), exact_count, partial_count, suppressed_count,
+            'scan_completed files_scanned=%d violations=%d exact=%d partial=%d suppressed=%d depth_limit_hits=%d',
+            files_scanned, len(results), exact_count, partial_count,
+            suppressed_count, depth_limit_hits,
         )
 
         return {
@@ -586,8 +595,9 @@ def _execute_scan_core(
             'total_violations':  len(results),
             'exact_violations':  exact_count,
             'partial_violations': partial_count,
-            'suppressed_count':  suppressed_count,
-            'results':           results,
+            'suppressed_count':    suppressed_count,
+            'depth_limit_hits':    depth_limit_hits,
+            'results':             results,
         }
 
     finally:
@@ -702,6 +712,7 @@ def scan():
             'exact_violations':   record['exact_violations'],
             'partial_violations': record['partial_violations'],
             'suppressed_count':   record.get('suppressed_count', 0),
+            'depth_limit_hits':   record.get('depth_limit_hits', 0),
             'results':            results[:100],
             'has_more':           len(results) > 100,
         })
@@ -844,6 +855,7 @@ def scan_stream():
                 'exact_violations':   record['exact_violations'],
                 'partial_violations': record['partial_violations'],
                 'suppressed_count':   record.get('suppressed_count', 0),
+                'depth_limit_hits':   record.get('depth_limit_hits', 0),
                 'results':            results[:100],
                 'has_more':           len(results) > 100,
             }))

@@ -70,6 +70,14 @@ Examples:
         
         results = scanner.scan_directory(args.repo, recursive=not args.no_recursive)
 
+        if scanner.depth_limit_hits:
+            print(
+                f"Warning: {scanner.depth_limit_hits} archive(s) were skipped because "
+                f"the nesting depth limit of {scanner.MAX_ARCHIVE_DEPTH} was reached. "
+                f"Results may be incomplete.",
+                file=sys.stderr,
+            )
+
         # Auto-detect or use explicit suppressions file
         suppressions_path = args.suppressions
         if not suppressions_path:
