@@ -60,6 +60,13 @@ def save_suppressions(path: str, suppressions: dict) -> None:
         raise
 
 
+def serialize_suppressions(suppressions: dict) -> str:
+    """Return YAML text for suppressions without writing to disk."""
+    entries = list(suppressions.values())
+    data = {"suppressions": entries}
+    return yaml.dump(data, default_flow_style=False, allow_unicode=True)
+
+
 def apply_suppressions(
     results: list, repo_root: str, suppressions: dict
 ) -> tuple:

@@ -31,6 +31,7 @@ from src.scanner import ProhibitedWordScanner
 from src.suppressions import (
     load_suppressions, apply_suppressions,
     add_suppression, remove_suppression, make_fingerprint,
+    serialize_suppressions,
 )
 
 _log = logging.getLogger(LOGGER_NAME)
@@ -372,8 +373,7 @@ def _resolve_words_file(config_source_type: str, upload, server_path: str,
     with tempfile.NamedTemporaryFile(mode='wb', suffix='.txt', delete=False) as f:
         shutil.copy2(src, f.name)
         words_path = f.name
-    shutil.rmtree(config_clone_dir, ignore_errors=True)
-    return words_path, None
+    return words_path, config_clone_dir   # caller must clean up
 
 
 # ── Finding enrichment ─────────────────────────────────────────────────────
@@ -428,6 +428,7 @@ def _execute_scan_core(
     words_path      = None
     words_is_server = False
     config_path     = None
+    config_clone_dir = None
     work_dir        = None
 
     def _emit(event_type, payload):
@@ -518,7 +519,7 @@ def _execute_scan_core(
                 zip_file.save(os.path.join(work_dir, 'upload.zip'))
 
         # ── Resolve config (prohibited words file) ────────────────────
-        words_path, _ = _resolve_words_file(
+        words_path, config_clone_dir = _resolve_words_file(
             config_source_type,
             upload             = cfg_upload,
             server_path        = cfg_server_path,
@@ -527,6 +528,33 @@ def _execute_scan_core(
             existing_clone_dir = work_dir if same_repo else None,
         )
         words_is_server = (config_source_type == 'server_path')
+
+        # ── Load suppressions from config source (optional) ──────────────
+        base_suppressions: dict = {}
+        _supp_name = 'suppressions.yaml'
+        if config_source_type == 'server_path':
+            cfg_dir = cfg_server_path.strip()
+            if not os.path.isdir(cfg_dir):
+                cfg_dir = os.path.dirname(cfg_dir)
+            base_suppressions = load_suppressions(os.path.join(cfg_dir, _supp_name))
+        elif config_source_type == 'git_repo':
+            if same_repo:
+                supp_dir = os.path.dirname(cfg_file_path)
+                candidate = (os.path.join(work_dir, supp_dir, _supp_name) if supp_dir
+                             else os.path.join(work_dir, _supp_name))
+            elif config_clone_dir:
+                supp_dir = os.path.dirname(cfg_file_path)
+                candidate = (os.path.join(config_clone_dir, supp_dir, _supp_name) if supp_dir
+                             else os.path.join(config_clone_dir, _supp_name))
+            else:
+                candidate = None
+            if candidate:
+                base_suppressions = load_suppressions(candidate)
+        # 'upload' source type: no folder to infer from → empty suppressions
+        # Clean up config clone dir now that we've read everything from it
+        if config_clone_dir:
+            shutil.rmtree(config_clone_dir, ignore_errors=True)
+            config_clone_dir = None
 
         # ── Exclude config file from scan when both live in the same repo ──
         if same_repo:
@@ -567,8 +595,7 @@ def _execute_scan_core(
         _enrich_findings(results, scan_target)
 
         # Apply suppressions
-        suppressions = load_suppressions(_SUPPRESSIONS_FILE)
-        results, suppressed_count = apply_suppressions(results, scan_target, suppressions)
+        results, suppressed_count = apply_suppressions(results, scan_target, base_suppressions)
 
         exact_count   = sum(1 for r in results if r.get('match_type') == 'exact')
         partial_count = sum(1 for r in results if r.get('match_type') == 'partial')
@@ -601,6 +628,8 @@ def _execute_scan_core(
             'suppressed_count':    suppressed_count,
             'depth_limit_hits':    depth_limit_hits,
             'results':             results,
+            'base_suppressions':    base_suppressions,
+            'session_suppressions': {},
         }
 
     finally:
@@ -610,6 +639,8 @@ def _execute_scan_core(
             os.unlink(words_path)
         if config_path and os.path.exists(config_path):
             os.unlink(config_path)
+        if config_clone_dir and os.path.exists(config_clone_dir):
+            shutil.rmtree(config_clone_dir, ignore_errors=True)
 
 
 # ── Flask routes ───────────────────────────────────────────────────────────
@@ -1298,6 +1329,23 @@ def v1_export_csv(scan_uuid):
 
 # ── v1: suppressions ───────────────────────────────────────────────────────
 
+@app.route('/api/v1/scans/<scan_uuid>/suppressions/export', methods=['GET'])
+def v1_suppressions_export(scan_uuid):
+    """Export merged suppressions (base + session) as a downloadable YAML file."""
+    record = _v1_get_scan(scan_uuid)
+    if record is None:
+        return _v1_err('NOT_FOUND', f'Scan {scan_uuid} not found', 404)
+    merged = {
+        **record.get('base_suppressions', {}),
+        **record.get('session_suppressions', {}),
+    }
+    yaml_text = serialize_suppressions(merged)
+    buf = io.BytesIO(yaml_text.encode('utf-8'))
+    filename = f"suppressions_{scan_uuid[:8]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.yaml"
+    return send_file(buf, mimetype='application/x-yaml',
+                     as_attachment=True, download_name=filename)
+
+
 @app.route('/api/v1/suppressions', methods=['GET'])
 def v1_suppressions_list():
     """List all suppression entries."""
@@ -1308,15 +1356,19 @@ def v1_suppressions_list():
 @app.route('/api/v1/suppressions', methods=['POST'])
 def v1_suppressions_add():
     """
-    Add a suppression.
-    Body: {"file": str, "line_content": str, "prohibited_word": str, "reason": str}
+    Add an in-session suppression for a specific scan.
+    Body: {"scan_id": str, "file": str, "line_content": str, "prohibited_word": str, "reason": str}
     """
-    body = request.get_json(silent=True) or {}
-    rel_file      = str(body.get('file',           '')).strip()
-    line_content  = str(body.get('line_content',   '')).strip()
+    from datetime import timezone
+    body            = request.get_json(silent=True) or {}
+    scan_id         = str(body.get('scan_id',         '')).strip()
+    rel_file        = str(body.get('file',            '')).strip()
+    line_content    = str(body.get('line_content',    '')).strip()
     prohibited_word = str(body.get('prohibited_word', '')).strip()
-    reason        = str(body.get('reason',         '')).strip()
+    reason          = str(body.get('reason',          '')).strip()
 
+    if not scan_id:
+        return _v1_err('VALIDATION_ERROR', 'scan_id is required', 400)
     if not rel_file:
         return _v1_err('VALIDATION_ERROR', 'file is required', 400)
     if not line_content:
@@ -1324,15 +1376,25 @@ def v1_suppressions_add():
     if not prohibited_word:
         return _v1_err('VALIDATION_ERROR', 'prohibited_word is required', 400)
 
-    try:
-        fp = add_suppression(_SUPPRESSIONS_FILE, rel_file, line_content, prohibited_word, reason)
-    except Exception as exc:
-        _log.error('suppression_add_failed error=%r', str(exc))
-        return _v1_err('SERVER_ERROR', str(exc), 500)
+    record = _v1_get_scan(scan_id)
+    if record is None:
+        return _v1_err('NOT_FOUND', f'Scan {scan_id} not found', 404)
 
-    suppressions = load_suppressions(_SUPPRESSIONS_FILE)
-    entry = suppressions.get(fp, {'id': fp})
-    return _v1_ok(entry, status=201)
+    fp = make_fingerprint(rel_file, line_content, prohibited_word)
+    session_supps = record.setdefault('session_suppressions', {})
+    if fp not in session_supps:
+        entry = {
+            'id':              fp,
+            'file':            rel_file,
+            'line_content':    line_content.strip(),
+            'prohibited_word': prohibited_word,
+            'added_at':        datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        }
+        if reason:
+            entry['reason'] = reason
+        session_supps[fp] = entry
+
+    return _v1_ok(session_supps[fp], status=201)
 
 
 @app.route('/api/v1/suppressions/<fingerprint>', methods=['DELETE'])

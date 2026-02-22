@@ -455,6 +455,19 @@
         }
         .suppress-btn[disabled] { opacity: 0.45; cursor: not-allowed; }
         .violation.suppressed-now { opacity: 0.4; transition: opacity 0.3s; }
+        .suppression-banner {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            border-radius: var(--radius);
+            border-left: 4px solid var(--info-border);
+            background: var(--info-bg);
+            color: var(--info-text);
+            font-size: 0.9rem;
+            margin-bottom: 12px;
+        }
+        .suppression-export-btn { margin-left: auto; padding: 5px 14px; font-size: 0.82rem; }
 
         .alert {
             display: flex; align-items: flex-start; gap: 10px;
@@ -796,6 +809,14 @@
     <!-- Results -->
     <div id="results"></div>
 
+    <!-- Suppression export banner — shown after first in-session suppression -->
+    <div id="suppressionBanner" style="display:none;" class="suppression-banner">
+      <span>&#9432; Suppressions changed this session &mdash; export to save</span>
+      <button class="btn-outline suppression-export-btn" onclick="exportSuppressions()">
+        &#8595; Export suppressions.yaml
+      </button>
+    </div>
+
     <!-- Feedback widget — shown after each successful scan -->
     <div id="feedbackWidget" style="display:none;" class="feedback-card">
         <div class="feedback-title">
@@ -970,6 +991,7 @@
 
     let _scan = null; // { uuid, scanId, allResults, totalViolations, exactViolations,
                       //   partialViolations, suppressedCount, hasMore, currentPage }
+    let _suppressionBannerShown = false;
 
     /* ── Result rendering ───────────────────────────────────────────── */
     function renderGroup(violations, badgeClass) {
@@ -1167,10 +1189,11 @@
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    file:           btn.dataset.file,
-                    line_content:   btn.dataset.content,
+                    scan_id:         _scan ? _scan.uuid : '',
+                    file:            btn.dataset.file,
+                    line_content:    btn.dataset.content,
                     prohibited_word: btn.dataset.word,
-                    reason:         '',
+                    reason:          '',
                 }),
             });
             if (resp.status === 201) {
@@ -1180,6 +1203,7 @@
                     row.style.textDecoration  = 'line-through';
                     row.style.transition      = 'opacity 0.3s';
                 }
+                _showSuppressionBanner();
             } else {
                 const body = await resp.json().catch(() => ({}));
                 const msg  = (body.error && body.error.message) || 'Could not suppress finding';
@@ -1192,6 +1216,18 @@
             btn.disabled    = false;
             btn.textContent = 'Suppress';
         }
+    }
+
+    function _showSuppressionBanner() {
+        if (_suppressionBannerShown) return;
+        _suppressionBannerShown = true;
+        const b = document.getElementById('suppressionBanner');
+        if (b) b.style.display = '';
+    }
+
+    function exportSuppressions() {
+        if (!_scan || !_scan.uuid) return;
+        window.location.href = `/api/v1/scans/${_scan.uuid}/suppressions/export`;
     }
 
     /* ── Scan ───────────────────────────────────────────────────────── */
@@ -1237,6 +1273,9 @@
         document.getElementById('pdfButton').style.display = 'none';
         document.getElementById('csvButton').style.display = 'none';
         document.getElementById('feedbackWidget').style.display = 'none';
+        _suppressionBannerShown = false;
+        const _sb = document.getElementById('suppressionBanner');
+        if (_sb) _sb.style.display = 'none';
         showProgress(initMsgs[currentSource] || 'Scanning\u2026');
 
         // ── Build form data ───────────────────────────────────────────
