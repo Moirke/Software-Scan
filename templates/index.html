@@ -417,8 +417,31 @@
             text-align: center;
             box-shadow: var(--shadow-sm);
         }
+        .stat-card.clickable {
+            cursor: pointer;
+            transition: border-color var(--transition), box-shadow var(--transition),
+                        background var(--transition);
+        }
+        .stat-card.clickable:hover { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+        .stat-card.active {
+            border-color: var(--accent);
+            background: var(--info-bg);
+            box-shadow: 0 0 0 3px var(--accent-glow);
+        }
         .stat-num   { font-size: 2.2rem; font-weight: 700; color: var(--stat-num); line-height: 1.1; }
         .stat-label { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-subtle); margin-top: 4px; }
+
+        .files-list { display: flex; flex-direction: column; gap: 6px; }
+        .files-list-item {
+            display: flex; align-items: center; gap: 12px;
+            background: var(--warn-bg);
+            border: 1px solid var(--warn-border);
+            border-left: 4px solid var(--warn-border);
+            border-radius: var(--radius);
+            padding: 10px 14px;
+            font-size: 0.85rem; font-weight: 600; word-break: break-all;
+        }
+        .files-list-badges { display: flex; gap: 5px; margin-left: auto; flex-shrink: 0; }
 
         .violation {
             background: var(--warn-bg);
@@ -962,6 +985,7 @@
     let _scan = null; // { uuid, scanId, allResults, totalViolations, exactViolations,
                       //   partialViolations, suppressedCount, hasMore, currentPage }
     let _suppressionBannerShown = false;
+    let _activeFilter = 'all'; // 'all' | 'exact' | 'partial' | 'files'
 
     /* ── Result rendering ───────────────────────────────────────────── */
     function renderGroup(violations, badgeClass) {
@@ -1039,10 +1063,10 @@
                               uniqueFiles, suppressedCount) {
         const suppressedCard = suppressedCount > 0 ? statCard(suppressedCount, 'Suppressed') : '';
         return `<div class="stats-bar">
-            ${statCard(totalViolations,  'Total')}
-            ${statCard(exactViolations,  'Exact')}
-            ${statCard(partialViolations,'Partial')}
-            ${statCard(uniqueFiles,      'Files affected')}
+            ${statCard(totalViolations,   'Total',          'all')}
+            ${statCard(exactViolations,   'Exact',          'exact')}
+            ${statCard(partialViolations, 'Partial',        'partial')}
+            ${statCard(uniqueFiles,       'Files affected', 'files')}
             ${suppressedCard}
         </div>`;
     }
@@ -1051,9 +1075,6 @@
         if (!_scan) return;
         const { currentPage, totalViolations, exactViolations, partialViolations,
                 suppressedCount, depthLimitHits, allResults } = _scan;
-        const totalPages = Math.max(1, Math.ceil(totalViolations / RESULTS_PER_PAGE));
-        const start      = (currentPage - 1) * RESULTS_PER_PAGE;
-        const pageSlice  = allResults.slice(start, start + RESULTS_PER_PAGE);
 
         const uniqueFiles = new Set(allResults.map(r => r.file)).size;
 
@@ -1065,15 +1086,32 @@
         }
         html += _renderStatsBar(totalViolations, exactViolations, partialViolations,
                                 uniqueFiles, suppressedCount);
-        html += _renderViolationPage(pageSlice);
-        html += _buildPagination(currentPage, totalPages);
+
+        if (_activeFilter === 'files') {
+            html += _renderFilesList(allResults);
+        } else {
+            const filtered = _activeFilter === 'exact'   ? allResults.filter(r => r.match_type === 'exact')
+                           : _activeFilter === 'partial' ? allResults.filter(r => r.match_type === 'partial')
+                           : allResults;
+            const filteredTotal = _activeFilter === 'exact'   ? exactViolations
+                                : _activeFilter === 'partial' ? partialViolations
+                                : totalViolations;
+            const totalPages = Math.max(1, Math.ceil(filteredTotal / RESULTS_PER_PAGE));
+            const start      = (currentPage - 1) * RESULTS_PER_PAGE;
+            const pageSlice  = filtered.slice(start, start + RESULTS_PER_PAGE);
+            html += _renderViolationPage(pageSlice);
+            html += _buildPagination(currentPage, totalPages);
+        }
 
         setResults(html);
     }
 
     async function goToPage(page) {
         if (!_scan) return;
-        const totalPages = Math.max(1, Math.ceil(_scan.totalViolations / RESULTS_PER_PAGE));
+        const filteredTotal = _activeFilter === 'exact'   ? _scan.exactViolations
+                            : _activeFilter === 'partial' ? _scan.partialViolations
+                            : _scan.totalViolations;
+        const totalPages = Math.max(1, Math.ceil(filteredTotal / RESULTS_PER_PAGE));
         if (page < 1 || page > totalPages) return;
 
         const start = (page - 1) * RESULTS_PER_PAGE;
@@ -1283,6 +1321,7 @@
         document.getElementById('csvButton').style.display = 'none';
         document.getElementById('feedbackWidget').style.display = 'none';
         _suppressionBannerShown = false;
+        _activeFilter = 'all';
         const _sb = document.getElementById('suppressionBanner');
         if (_sb) _sb.style.display = 'none';
         showProgress(initMsgs[currentSource] || 'Scanning\u2026');
@@ -1381,8 +1420,44 @@
         return `<div class="alert alert-${type}"><span class="alert-icon">${icon}</span><span>${message}</span></div>`;
     }
 
-    function statCard(num, label) {
-        return `<div class="stat-card"><div class="stat-num">${num}</div><div class="stat-label">${label}</div></div>`;
+    function statCard(num, label, filter = null) {
+        const active   = filter && _activeFilter === filter ? ' active' : '';
+        const cls      = filter ? `stat-card clickable${active}` : 'stat-card';
+        const onclick  = filter ? `onclick="setFilter('${filter}')"` : '';
+        return `<div class="${cls}" ${onclick}>
+            <div class="stat-num">${num}</div>
+            <div class="stat-label">${label}</div>
+        </div>`;
+    }
+
+    function setFilter(filter) {
+        if (_activeFilter === filter) { _activeFilter = 'all'; }
+        else { _activeFilter = filter; }
+        if (_scan) _scan.currentPage = 1;
+        _reRenderPage();
+    }
+
+    function _renderFilesList(allResults) {
+        const byFile = {};
+        allResults.forEach(r => {
+            if (!byFile[r.file]) byFile[r.file] = { rel: r.relative_file || r.file, exact: 0, partial: 0 };
+            if (r.match_type === 'exact') byFile[r.file].exact++;
+            else byFile[r.file].partial++;
+        });
+        const entries = Object.values(byFile);
+        if (!entries.length) return '';
+        let h = '<div class="files-list">';
+        for (const f of entries) {
+            const badges = [];
+            if (f.exact)   badges.push(`<span class="violation-word">${f.exact} exact</span>`);
+            if (f.partial) badges.push(`<span class="violation-word partial">${f.partial} partial</span>`);
+            h += `<div class="files-list-item">
+                <span>📄 ${escapeHtml(f.rel)}</span>
+                <span class="files-list-badges">${badges.join('')}</span>
+            </div>`;
+        }
+        h += '</div>';
+        return h;
     }
 
     function escapeHtml(text) {
