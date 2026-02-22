@@ -6,11 +6,13 @@ Things we want to improve but haven't tackled yet, roughly grouped by theme.
 
 ## Security
 
-- **HTTPS / TLS** — currently the service speaks plain HTTP. For on-premise
-  deployments the realistic options are: terminating TLS at Nginx using a
-  certificate from the corporate PKI or a wildcard cert, or running certbot
-  against an internal ACME server if one exists. Certificate renewal and
-  Gunicorn hot-reload both need to be handled.
+- **TLS certificate management** — the default deployment (`docker-compose.yml`)
+  already terminates TLS at Nginx on port 443 (TLSv1.2/1.3) and redirects HTTP
+  to HTTPS; `docker-compose.http.yml` is a deliberate plain-HTTP opt-out for
+  isolated networks. What is not handled is certificate lifecycle: the bundled
+  `generate-certs.sh` creates a self-signed cert that browsers will warn on.
+  For real deployments, swap in a cert from the corporate PKI or a wildcard
+  cert, and arrange automated renewal.
 
 - **Authentication** — the web UI is completely open. Anyone who can reach the
   port can submit a scan. For on-premise deployments the most practical options
