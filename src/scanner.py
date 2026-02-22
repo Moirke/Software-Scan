@@ -2,6 +2,7 @@
 Repository Scanner - Core scanning functionality
 Supports searching through code repositories including compressed/archived files
 """
+import logging
 import os
 import re
 import zipfile
@@ -13,6 +14,8 @@ from pathlib import Path
 from typing import List, Dict, Set, Tuple
 import yaml
 import json
+
+from src.logging_config import LOGGER_NAME
 
 
 class ArchiveExtractor:
@@ -34,29 +37,27 @@ class ArchiveExtractor:
     def extract_rpm(archive_path: str, extract_dir: str) -> None:
         """Extract RPM files using rpm2cpio and cpio"""
         import subprocess
+        _log = logging.getLogger(LOGGER_NAME)
         try:
-            # Try rpm2cpio approach
             result = subprocess.run(
                 f"cd {extract_dir} && rpm2cpio {archive_path} | cpio -idmv 2>/dev/null",
                 shell=True,
                 capture_output=True
             )
             if result.returncode != 0:
-                print(f"Warning: Could not extract RPM {archive_path}")
+                _log.warning('archive_extraction_failed path=%s error="rpm2cpio non-zero exit"', archive_path)
         except Exception as e:
-            print(f"Error extracting RPM {archive_path}: {e}")
+            _log.warning('archive_extraction_failed path=%s error=%r', archive_path, str(e))
     
     @staticmethod
     def extract_docker_image(image_path: str, extract_dir: str) -> None:
         """Extract Docker image tar file"""
-        import subprocess
+        _log = logging.getLogger(LOGGER_NAME)
         try:
-            # Docker images are typically tar files
             if tarfile.is_tarfile(image_path):
                 with tarfile.open(image_path, 'r') as tar:
                     tar.extractall(extract_dir)
-                
-                # Extract layer tar files
+
                 for root, dirs, files in os.walk(extract_dir):
                     for file in files:
                         if file.endswith('.tar'):
@@ -66,10 +67,10 @@ class ArchiveExtractor:
                             try:
                                 with tarfile.open(layer_path, 'r') as layer_tar:
                                     layer_tar.extractall(layer_extract)
-                            except:
-                                pass
+                            except Exception as layer_exc:
+                                _log.warning('archive_extraction_failed path=%s error=%r', layer_path, str(layer_exc))
         except Exception as e:
-            print(f"Error extracting Docker image {image_path}: {e}")
+            _log.warning('archive_extraction_failed path=%s error=%r', image_path, str(e))
 
 
 class ProhibitedWordScanner:
@@ -94,8 +95,9 @@ class ProhibitedWordScanner:
         '.pdf', '.doc', '.docx', '.xls', '.xlsx'
     }
     
-    def __init__(self, config_path: str):
+    def __init__(self, config_path: str, logger: logging.Logger | None = None):
         """Initialize scanner with configuration file"""
+        self._log = logger or logging.getLogger(LOGGER_NAME)
         self.config = self._load_config(config_path)
         self.case_sensitive = self.config.get('case_sensitive', False)
         self.max_file_size = self.config.get('max_file_size_mb', 10) * 1024 * 1024
@@ -117,18 +119,76 @@ class ProhibitedWordScanner:
                 raise ValueError("Config file must be .yaml, .yml, or .json")
     
     def _load_prohibited_words(self) -> List[str]:
-        """Load prohibited words from config"""
+        """
+        Parse the prohibited words/patterns source and compile each entry.
+
+        Supported line formats (one per line):
+          password              — plain word, word-boundary matched (exact/partial)
+          "regex:"              — quoted literal, substring matched (always partial)
+          regex:AKIA[0-9A-Z]+   — regex pattern, matched as-is (always exact)
+          # comment             — ignored
+
+        Compiled patterns are stored in self._compiled_patterns.
+        Returns a list of display names stored as self.prohibited_words.
+        """
         words_file = self.config.get('prohibited_words_file')
         if words_file:
-            with open(words_file, 'r') as f:
-                words = [line.strip() for line in f if line.strip() and not line.startswith('#')]
+            with open(words_file, 'r', encoding='utf-8') as f:
+                raw_lines = [line.rstrip('\n') for line in f]
         else:
-            words = self.config.get('prohibited_words', [])
-        
-        if not self.case_sensitive:
-            words = [w.lower() for w in words]
-        
-        return words
+            raw_lines = [str(w) for w in self.config.get('prohibited_words', [])]
+
+        flags = 0 if self.case_sensitive else re.IGNORECASE
+        self._compiled_patterns: List[Dict] = []
+        display_names: List[str] = []
+
+        for raw in raw_lines:
+            stripped = raw.strip()
+            if not stripped or stripped.startswith('#'):
+                continue
+
+            if stripped.startswith('"') and stripped.endswith('"') and len(stripped) >= 2:
+                # ── Quoted literal: strip quotes, match as substring ───────
+                value = stripped[1:-1]
+                if not value:
+                    continue
+                self._compiled_patterns.append({
+                    'type':    'literal',
+                    'display': stripped,
+                    'pattern': re.compile(re.escape(value), flags),
+                })
+
+            elif stripped.startswith('regex:'):
+                # ── Regex pattern ─────────────────────────────────────────
+                raw_pattern = stripped[len('regex:'):]
+                if not raw_pattern:
+                    continue
+                try:
+                    compiled = re.compile(raw_pattern, flags)
+                except re.error as exc:
+                    self._log.warning(
+                        'invalid_regex_skipped pattern=%r error=%r',
+                        raw_pattern, str(exc),
+                    )
+                    continue
+                self._compiled_patterns.append({
+                    'type':    'regex',
+                    'display': stripped,
+                    'pattern': compiled,
+                })
+
+            else:
+                # ── Plain word: word-boundary matching ────────────────────
+                self._compiled_patterns.append({
+                    'type':            'word',
+                    'display':         stripped,
+                    'pattern_exact':   re.compile(r'\b' + re.escape(stripped) + r'\b', flags),
+                    'pattern_partial': re.compile(re.escape(stripped), flags),
+                })
+
+            display_names.append(stripped)
+
+        return display_names
     
     def _is_binary_file(self, filepath: str) -> bool:
         """Check if file is likely binary"""
@@ -187,66 +247,119 @@ class ProhibitedWordScanner:
         return False
 
     def _search_in_file(self, filepath: str) -> List[Dict]:
-        """Search for prohibited words in a single file.
+        """Search for prohibited words/patterns in a single file.
 
-        Each match is classified as one of:
-          'exact'   — the word appears as a complete token (word-boundary match)
-          'partial' — the word is a substring of a larger token
+        Match classification:
+          'exact'   — plain word at a word boundary, or a regex pattern match
+          'partial' — plain word as a substring, or a quoted literal match
         """
         results = []
 
         if self._is_binary_file(filepath):
+            self._log.debug('file_skipped_binary path=%s', filepath)
             return results
 
         try:
             file_size = os.path.getsize(filepath)
             if file_size > self.max_file_size:
-                print(f"Skipping large file: {filepath} ({file_size / 1024 / 1024:.2f} MB)")
+                self._log.warning(
+                    'file_skipped_size path=%s size_mb=%.1f limit_mb=%d',
+                    filepath, file_size / 1024 / 1024,
+                    self.config.get('max_file_size_mb', 10),
+                )
                 return results
 
+            self._log.debug('file_scanning path=%s', filepath)
             with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                 for line_num, line in enumerate(f, 1):
-                    search_line = line if self.case_sensitive else line.lower()
+                    for entry in self._compiled_patterns:
+                        display = entry['display']
 
-                    for word in self.prohibited_words:
-                        # First pass: whole-word (exact) matches
-                        exact_pattern = r'\b' + re.escape(word) + r'\b'
-                        exact_positions: Set[int] = set()
-                        for match in re.finditer(exact_pattern, search_line):
-                            exact_positions.add(match.start())
-                            results.append({
-                                'file':            filepath,
-                                'line_number':     line_num,
-                                'line_content':    line.strip(),
-                                'prohibited_word': word,
-                                'position':        match.start(),
-                                'match_type':      'exact',
-                            })
-
-                        # Second pass: partial (substring) matches not already
-                        # captured as exact matches above
-                        for match in re.finditer(re.escape(word), search_line):
-                            if match.start() not in exact_positions:
+                        if entry['type'] == 'word':
+                            # Two-pass: exact (word-boundary) then partial (substring)
+                            exact_positions: Set[int] = set()
+                            for match in re.finditer(entry['pattern_exact'], line):
+                                exact_positions.add(match.start())
                                 results.append({
                                     'file':            filepath,
                                     'line_number':     line_num,
                                     'line_content':    line.strip(),
-                                    'prohibited_word': word,
+                                    'prohibited_word': display,
+                                    'position':        match.start(),
+                                    'match_type':      'exact',
+                                })
+                                self._log.debug(
+                                    'match_found path=%s line=%d word=%r match_type=exact',
+                                    filepath, line_num, display,
+                                )
+                            for match in re.finditer(entry['pattern_partial'], line):
+                                if match.start() not in exact_positions:
+                                    results.append({
+                                        'file':            filepath,
+                                        'line_number':     line_num,
+                                        'line_content':    line.strip(),
+                                        'prohibited_word': display,
+                                        'position':        match.start(),
+                                        'match_type':      'partial',
+                                    })
+                                    self._log.debug(
+                                        'match_found path=%s line=%d word=%r match_type=partial',
+                                        filepath, line_num, display,
+                                    )
+
+                        elif entry['type'] == 'literal':
+                            # Quoted string: substring match, always partial
+                            for match in re.finditer(entry['pattern'], line):
+                                results.append({
+                                    'file':            filepath,
+                                    'line_number':     line_num,
+                                    'line_content':    line.strip(),
+                                    'prohibited_word': display,
                                     'position':        match.start(),
                                     'match_type':      'partial',
                                 })
+                                self._log.debug(
+                                    'match_found path=%s line=%d word=%r match_type=partial',
+                                    filepath, line_num, display,
+                                )
+
+                        elif entry['type'] == 'regex':
+                            # Regex pattern: always exact (user controls boundaries)
+                            for match in re.finditer(entry['pattern'], line):
+                                results.append({
+                                    'file':            filepath,
+                                    'line_number':     line_num,
+                                    'line_content':    line.strip(),
+                                    'prohibited_word': display,
+                                    'position':        match.start(),
+                                    'match_type':      'exact',
+                                })
+                                self._log.debug(
+                                    'match_found path=%s line=%d word=%r match_type=exact',
+                                    filepath, line_num, display,
+                                )
+
+        except PermissionError as e:
+            self._log.warning('file_skipped_permission path=%s error=%r', filepath, str(e))
         except Exception as e:
-            print(f"Error reading file {filepath}: {e}")
+            self._log.error('file_read_error path=%s error=%r', filepath, str(e))
 
         return results
     
-    def scan_directory(self, repo_path: str, recursive: bool = True) -> List[Dict]:
-        """Scan directory for prohibited words"""
-        all_results = []
+    def scan_directory(self, repo_path: str, recursive: bool = True,
+                       on_progress=None) -> List[Dict]:
+        """Scan directory for prohibited words.
+
+        on_progress: optional callable(files_scanned: int, current_file: str)
+            Called just before each file is scanned.  Throttle on the caller
+            side if the volume of events needs to be reduced.
+        """
+        all_results  = []
         scanned_files = set()
-        
+        files_scanned = 0
+
         def scan_path(path: str, is_extracted: bool = False):
-            """Recursively scan a path"""
+            nonlocal files_scanned
             if self._is_excluded(path):
                 return
 
@@ -254,27 +367,26 @@ class ProhibitedWordScanner:
                 if path in scanned_files:
                     return
                 scanned_files.add(path)
-                
-                # Check if it's an archive
-                is_archive, _ = self._is_archive(path)
+
+                is_archive, fmt = self._is_archive(path)
                 if is_archive:
-                    print(f"Extracting archive: {path}")
+                    self._log.info('archive_extracting path=%s format=%s', path, fmt or 'unknown')
                     extract_dir = self._extract_archive(path)
                     scan_path(extract_dir, is_extracted=True)
                 else:
-                    # Search in file
+                    if on_progress is not None:
+                        on_progress(files_scanned, path)
                     results = self._search_in_file(path)
+                    files_scanned += 1
                     all_results.extend(results)
-            
+
             elif os.path.isdir(path):
                 for root, dirs, files in os.walk(path):
                     for file in files:
-                        filepath = os.path.join(root, file)
-                        scan_path(filepath, is_extracted)
-                    
+                        scan_path(os.path.join(root, file), is_extracted)
                     if not recursive and not is_extracted:
                         break
-        
+
         scan_path(repo_path)
         return all_results
     
@@ -284,7 +396,7 @@ class ProhibitedWordScanner:
             try:
                 shutil.rmtree(temp_dir)
             except Exception as e:
-                print(f"Error cleaning up {temp_dir}: {e}")
+                self._log.warning('cleanup_failed path=%s error=%r', temp_dir, str(e))
         self.temp_dirs = []
     
     def format_results(self, results: List[Dict]) -> str:

@@ -673,5 +673,214 @@ class TestPartialMatching(ScannerTestCase):
         self.assertRegex(output, r'\d+ partial')
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Regex and quoted-literal pattern support
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestRegexAndLiteralPatterns(ScannerTestCase):
+    """
+    Tests for regex: prefix patterns and "quoted literal" entries.
+
+    Entry types:
+      password             — plain word (word-boundary exact/partial)
+      "regex:"             — quoted literal (substring, always partial)
+      regex:AKIA[0-9]+     — regex pattern (as-is, always exact)
+    """
+
+    def _make_custom_scanner(self, words_content: str,
+                              case_sensitive: bool = False) -> ProhibitedWordScanner:
+        """Write a custom words file and return a scanner pointed at it."""
+        custom_words = os.path.join(self.tmpdir, 'custom_words.txt')
+        with open(custom_words, 'w') as f:
+            f.write(words_content)
+        cfg_path = self._write_config(
+            prohibited_words_file=custom_words,
+            case_sensitive=case_sensitive,
+        )
+        return ProhibitedWordScanner(cfg_path)
+
+    def scan_with(self, words_content: str, file_content: str,
+                  case_sensitive: bool = False) -> list:
+        """Scan a single file using a custom words file and return results."""
+        scanner = self._make_custom_scanner(words_content, case_sensitive)
+        self.write_text('target.py', file_content)
+        results = scanner.scan_directory(self.scan_dir)
+        scanner.cleanup()
+        return results
+
+    # ── Words file parsing ─────────────────────────────────────────────────────
+
+    def test_plain_word_stored_in_prohibited_words(self):
+        scanner = self._make_custom_scanner('password\n')
+        self.assertIn('password', scanner.prohibited_words)
+
+    def test_regex_entry_stored_in_prohibited_words(self):
+        scanner = self._make_custom_scanner('regex:AKIA[0-9A-Z]{16}\n')
+        self.assertIn('regex:AKIA[0-9A-Z]{16}', scanner.prohibited_words)
+
+    def test_quoted_literal_stored_in_prohibited_words(self):
+        scanner = self._make_custom_scanner('"regex:"\n')
+        self.assertIn('"regex:"', scanner.prohibited_words)
+
+    def test_invalid_regex_is_skipped_gracefully(self):
+        """An invalid regex must be silently skipped — other entries still load."""
+        scanner = self._make_custom_scanner('password\nregex:[invalid\n')
+        self.assertIn('password', scanner.prohibited_words)
+        self.assertNotIn('regex:[invalid', scanner.prohibited_words)
+
+    def test_bare_regex_prefix_with_no_pattern_is_skipped(self):
+        scanner = self._make_custom_scanner('regex:\npassword\n')
+        self.assertNotIn('regex:', scanner.prohibited_words)
+        self.assertIn('password', scanner.prohibited_words)
+
+    def test_empty_quoted_literal_is_skipped(self):
+        scanner = self._make_custom_scanner('""\npassword\n')
+        self.assertEqual(scanner.prohibited_words, ['password'])
+
+    def test_comment_lines_ignored(self):
+        scanner = self._make_custom_scanner('# this is a comment\npassword\n')
+        self.assertNotIn('# this is a comment', scanner.prohibited_words)
+        self.assertIn('password', scanner.prohibited_words)
+
+    # ── Regex matching ─────────────────────────────────────────────────────────
+
+    def test_regex_matches_aws_key_pattern(self):
+        results = self.scan_with(
+            'regex:AKIA[0-9A-Z]{16}\n',
+            'key = "AKIAIOSFODNN7EXAMPLE"\n',
+        )
+        self.assertGreater(len(results), 0)
+        self.assertTrue(
+            any(r['prohibited_word'] == 'regex:AKIA[0-9A-Z]{16}' for r in results))
+
+    def test_regex_match_type_is_exact(self):
+        results = self.scan_with(
+            'regex:AKIA[0-9A-Z]{16}\n',
+            'key = "AKIAIOSFODNN7EXAMPLE"\n',
+        )
+        self.assertTrue(all(r['match_type'] == 'exact' for r in results))
+
+    def test_regex_no_match_when_pattern_absent(self):
+        results = self.scan_with(
+            'regex:AKIA[0-9A-Z]{16}\n',
+            'key = "not-an-aws-key"\n',
+        )
+        self.assertEqual(results, [])
+
+    def test_regex_case_insensitive_by_default(self):
+        results = self.scan_with(
+            'regex:todo\n',
+            '# TODO: fix this later\n',
+            case_sensitive=False,
+        )
+        self.assertGreater(len(results), 0)
+
+    def test_regex_case_sensitive_respected(self):
+        results = self.scan_with(
+            'regex:TODO\n',
+            '# todo: fix this later\n',
+            case_sensitive=True,
+        )
+        self.assertEqual(results, [])
+
+    def test_regex_word_boundaries_in_pattern_work(self):
+        """User can embed \\b in their regex to enforce word-boundary behaviour."""
+        results = self.scan_with(
+            r'regex:\bpassword\b' + '\n',
+            'passwordmanager = x\n',
+        )
+        # \b...\b should not match 'password' inside 'passwordmanager'
+        self.assertEqual(results, [])
+
+    def test_regex_multiple_matches_on_one_line(self):
+        results = self.scan_with(
+            'regex:[A-Z]{4}\n',
+            'AAAA BBBB CCCC\n',
+        )
+        self.assertEqual(len(results), 3)
+
+    # ── Literal (quoted) matching ──────────────────────────────────────────────
+
+    def test_literal_matches_regex_prefix_string(self):
+        """Primary use case: searching for the literal text 'regex:'."""
+        results = self.scan_with(
+            '"regex:"\n',
+            'config = "regex:something"\n',
+        )
+        self.assertGreater(len(results), 0)
+        self.assertTrue(any(r['prohibited_word'] == '"regex:"' for r in results))
+
+    def test_literal_match_type_is_partial(self):
+        results = self.scan_with(
+            '"regex:"\n',
+            'config = "regex:something"\n',
+        )
+        self.assertTrue(all(r['match_type'] == 'partial' for r in results))
+
+    def test_literal_metacharacters_not_treated_as_regex(self):
+        """Dots and other regex metacharacters in a quoted literal must match literally."""
+        # '.' in a regex matches any char; as a literal it must only match '.'
+        results = self.scan_with(
+            '"v1.0"\n',
+            'version = "v1x0"\n',   # 'x' should NOT satisfy literal '.'
+        )
+        self.assertEqual(results, [])
+
+    def test_literal_metacharacters_match_exact_text(self):
+        results = self.scan_with(
+            '"v1.0"\n',
+            'version = "v1.0"\n',
+        )
+        self.assertGreater(len(results), 0)
+
+    def test_literal_case_insensitive(self):
+        results = self.scan_with(
+            '"Regex:"\n',
+            'x = Regex:something\n',
+            case_sensitive=False,
+        )
+        self.assertGreater(len(results), 0)
+
+    def test_literal_case_sensitive(self):
+        results = self.scan_with(
+            '"Regex:"\n',
+            'x = regex:something\n',
+            case_sensitive=True,
+        )
+        self.assertEqual(results, [])
+
+    # ── Mixed patterns ─────────────────────────────────────────────────────────
+
+    def test_mixed_file_loads_all_three_types(self):
+        words_content = (
+            '# comment\n'
+            'password\n'
+            '"regex:"\n'
+            'regex:AKIA[0-9A-Z]{16}\n'
+        )
+        scanner = self._make_custom_scanner(words_content)
+        self.assertEqual(len(scanner.prohibited_words), 3)
+        self.assertIn('password',                scanner.prohibited_words)
+        self.assertIn('"regex:"',                scanner.prohibited_words)
+        self.assertIn('regex:AKIA[0-9A-Z]{16}', scanner.prohibited_words)
+
+    def test_mixed_file_each_type_matches_independently(self):
+        words_content = (
+            'password\n'
+            '"regex:"\n'
+            'regex:AKIA[0-9A-Z]{16}\n'
+        )
+        file_content = (
+            'password = "hunter2"\n'
+            'config = "regex:something"\n'
+            'key = AKIAIOSFODNN7EXAMPLE\n'
+        )
+        results = self.scan_with(words_content, file_content)
+        words_found = {r['prohibited_word'] for r in results}
+        self.assertIn('password',                words_found)
+        self.assertIn('"regex:"',                words_found)
+        self.assertIn('regex:AKIA[0-9A-Z]{16}', words_found)
+
+
 if __name__ == '__main__':
     unittest.main()

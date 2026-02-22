@@ -1,6 +1,18 @@
 # Prohibited Words List
-# One word per line
-# Lines starting with # are comments
+#
+# Three entry formats are supported:
+#
+#   word              — plain word, matched at word boundaries (exact/partial)
+#   "literal string"  — quoted literal, matched as a substring (always partial)
+#   regex:pattern     — compiled regex, matched as-is (always exact)
+#
+# Examples of regex patterns (uncomment to enable):
+#   regex:AKIA[0-9A-Z]{16}          AWS access key
+#   regex:sk-[A-Za-z0-9]{48}        OpenAI API key
+#   regex:[A-Za-z0-9+/]{40}={0,2}   Base64-encoded secret (40+ chars)
+#
+# To search for the literal text "regex:" use a quoted literal:
+#   "regex:"
 
 # Security-related
 password
