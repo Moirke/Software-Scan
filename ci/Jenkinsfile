@@ -1,101 +1,121 @@
+// Jenkinsfile — Repository Scanner build pipeline
+//
+// Produces the Docker image artifact used for deployment.
+//
+// Stages:
+//   1. Install Python deps
+//   2. Run full test suite with coverage report
+//   3. Build Docker image (tagged by build number + git SHA)
+//   4. Smoke test — start the container and verify /health responds
+//   5. Save image as repo-scanner-<N>.tar.gz and archive to Jenkins
+//   6. Remove local image to keep the agent disk clean
+//
+// Outputs:
+//   Jenkins artifact: repo-scanner-<BUILD_NUMBER>.tar.gz
+//
+// Next step after a successful build:
+//   See runbooks/upgrade.md to deploy the artifact to the VM.
+
 pipeline {
     agent any
-    
+
     environment {
-        SCANNER_CONFIG = 'config/config.yaml'
-        SCAN_TARGET = '.'  // Scan the current workspace
-        RESULTS_FILE = 'scan_results.txt'
+        IMAGE_NAME = 'repo-scanner'
+        IMAGE_TAG  = "${env.BUILD_NUMBER}"
+        TAR_FILE   = "repo-scanner-${env.BUILD_NUMBER}.tar.gz"
     }
-    
+
     stages {
-        stage('Setup Scanner') {
+
+        stage('Install dependencies') {
             steps {
-                script {
-                    echo 'Setting up Repository Scanner...'
-                    sh '''
-                        # Install dependencies if not already installed
-                        pip3 install -r requirements.txt --break-system-packages || true
-                        chmod +x run-cli.py src/cli.py
-                    '''
+                sh 'pip install --quiet -r requirements.txt'
+            }
+        }
+
+        stage('Test') {
+            steps {
+                sh 'coverage run -m unittest discover tests/'
+            }
+            post {
+                always {
+                    sh 'coverage report'
+                    sh 'coverage html'
+                    publishHTML(target: [
+                        allowMissing:          false,
+                        alwaysLinkToLastBuild: true,
+                        keepAll:               true,
+                        reportDir:             'htmlcov',
+                        reportFiles:           'index.html',
+                        reportName:            'Coverage Report',
+                    ])
                 }
             }
         }
-        
-        stage('Scan for Prohibited Words') {
+
+        stage('Build image') {
             steps {
-                script {
-                    echo 'Scanning repository for prohibited words...'
-                    // Run scan and capture exit code
-                    def scanResult = sh(
-                        script: "./run-cli.py -c ${SCANNER_CONFIG} -r ${SCAN_TARGET} -o ${RESULTS_FILE} -v",
-                        returnStatus: true
-                    )
-                    
-                    // Store exit code for later stages
-                    env.SCAN_EXIT_CODE = scanResult
-                    
-                    echo "Scan completed with exit code: ${scanResult}"
-                }
+                sh """
+                    docker build \\
+                        --tag  ${IMAGE_NAME}:${IMAGE_TAG} \\
+                        --tag  ${IMAGE_NAME}:latest \\
+                        --label org.opencontainers.image.revision=\$(git rev-parse --short HEAD) \\
+                        --label org.opencontainers.image.created=\$(date -u +%Y-%m-%dT%H:%M:%SZ) \\
+                        .
+                """
             }
         }
-        
-        stage('Archive Results') {
+
+        stage('Smoke test') {
             steps {
                 script {
-                    // Always archive results, even if scan found violations
-                    archiveArtifacts artifacts: "${RESULTS_FILE}", allowEmptyArchive: true
-                    
-                    // Read and display results
-                    if (fileExists(RESULTS_FILE)) {
-                        def results = readFile(RESULTS_FILE)
-                        echo "Scan Results:\n${results}"
+                    // Run the image on a high port and confirm the health endpoint responds.
+                    // The container is stopped whether the test passes or fails.
+                    def cid = sh(
+                        script: "docker run -d --rm -p 18080:8080 ${IMAGE_NAME}:${IMAGE_TAG}",
+                        returnStdout: true
+                    ).trim()
+                    try {
+                        sh 'sleep 5 && curl --silent --fail http://localhost:18080/health'
+                    } finally {
+                        sh "docker stop ${cid} || true"
                     }
                 }
             }
         }
-        
-        stage('Evaluate Results') {
+
+        stage('Save artifact') {
             steps {
-                script {
-                    if (env.SCAN_EXIT_CODE == '1') {
-                        error('Prohibited words found! Check scan results for details.')
-                    } else if (env.SCAN_EXIT_CODE == '0') {
-                        echo '✓ No prohibited words found!'
-                    } else {
-                        error('Scanner encountered an error!')
-                    }
-                }
+                // Typical image is ~200 MB; gzip compresses it to ~60 MB.
+                sh "docker save ${IMAGE_NAME}:${IMAGE_TAG} | gzip > ${TAR_FILE}"
+                archiveArtifacts artifacts: "${TAR_FILE}", fingerprint: true
+            }
+        }
+
+        stage('Remove local image') {
+            steps {
+                sh "docker rmi ${IMAGE_NAME}:${IMAGE_TAG} ${IMAGE_NAME}:latest || true"
             }
         }
     }
-    
+
     post {
-        always {
-            // Clean up
-            cleanWs(
-                deleteDirs: true,
-                patterns: [[pattern: 'scan_results.txt', type: 'INCLUDE']]
-            )
-        }
-        
-        failure {
-            emailext(
-                subject: "Build Failed: Prohibited Words Detected - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                body: """
-                    Build: ${env.JOB_NAME} #${env.BUILD_NUMBER}
-                    Status: FAILED - Prohibited words detected
-                    
-                    Check the build artifacts for detailed scan results.
-                    
-                    Build URL: ${env.BUILD_URL}
-                """,
-                to: '${DEFAULT_RECIPIENTS}',
-                attachLog: true
-            )
-        }
-        
         success {
-            echo 'Build passed - No prohibited words found!'
+            echo """
+Build ${BUILD_NUMBER} succeeded.
+
+Artifact : ${TAR_FILE}
+Download : ${BUILD_URL}artifact/${TAR_FILE}
+
+Deploy following runbooks/upgrade.md
+"""
+        }
+        failure {
+            echo 'Build failed — check the stage output above for details.'
+        }
+        cleanup {
+            // Safety net: remove the image if any stage left it behind.
+            sh "docker rmi ${IMAGE_NAME}:${IMAGE_TAG} ${IMAGE_NAME}:latest 2>/dev/null || true"
         }
     }
 }
