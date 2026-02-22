@@ -1405,14 +1405,17 @@ def v1_suppressions_add():
 
 @app.route('/api/v1/suppressions/<fingerprint>', methods=['DELETE'])
 def v1_suppressions_delete(fingerprint):
-    """Remove a suppression by fingerprint. Returns 204 No Content."""
-    try:
-        found = remove_suppression(_SUPPRESSIONS_FILE, fingerprint)
-    except Exception as exc:
-        _log.error('suppression_remove_failed error=%r', str(exc))
-        return _v1_err('SERVER_ERROR', str(exc), 500)
-    if not found:
+    """Remove an in-session suppression by fingerprint. Requires ?scan_id=<uuid>. Returns 204."""
+    scan_id = request.args.get('scan_id', '').strip()
+    if not scan_id:
+        return _v1_err('VALIDATION_ERROR', 'scan_id query parameter is required', 400)
+    record = _v1_get_scan(scan_id)
+    if record is None:
+        return _v1_err('NOT_FOUND', f'Scan {scan_id} not found', 404)
+    session_supps = record.get('session_suppressions', {})
+    if fingerprint not in session_supps:
         return _v1_err('NOT_FOUND', f'Suppression {fingerprint} not found', 404)
+    del session_supps[fingerprint]
     return '', 204
 
 

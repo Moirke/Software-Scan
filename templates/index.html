@@ -454,6 +454,13 @@
             color: var(--accent);
         }
         .suppress-btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+        .suppress-btn.suppressed {
+            color: var(--accent);
+            border-color: var(--accent);
+        }
+        .suppress-btn.suppressed:hover:not([disabled]) {
+            background: var(--accent-glow);
+        }
         .violation.suppressed-now { opacity: 0.4; transition: opacity 0.3s; }
         .suppression-banner {
             display: flex;
@@ -1131,40 +1138,79 @@
 
     /* ── Suppress finding ───────────────────────────────────────────── */
     async function suppressFinding(btn) {
-        const row = btn.closest('.violation-row');
-        btn.disabled = true;
-        btn.textContent = 'Suppressing…';
-        try {
-            const resp = await fetch('/api/v1/suppressions', {
-                method:  'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    scan_id:         _scan ? _scan.uuid : '',
-                    file:            btn.dataset.file,
-                    line_content:    btn.dataset.content,
-                    prohibited_word: btn.dataset.word,
-                    reason:          '',
-                }),
-            });
-            if (resp.status === 201) {
-                btn.textContent = 'Suppressed';
-                if (row) {
-                    row.style.opacity         = '0.4';
-                    row.style.textDecoration  = 'line-through';
-                    row.style.transition      = 'opacity 0.3s';
+        const row    = btn.closest('.violation-row');
+        const scanId = _scan ? _scan.uuid : '';
+
+        if (btn.dataset.suppressed === '1') {
+            // ── Undo ──────────────────────────────────────────────────
+            const fp = btn.dataset.fp;
+            btn.disabled    = true;
+            btn.textContent = 'Undoing…';
+            try {
+                const resp = await fetch(
+                    `/api/v1/suppressions/${fp}?scan_id=${encodeURIComponent(scanId)}`,
+                    { method: 'DELETE' }
+                );
+                if (resp.status === 204) {
+                    delete btn.dataset.suppressed;
+                    btn.classList.remove('suppressed');
+                    btn.textContent = 'Suppress';
+                    if (row) {
+                        row.style.opacity        = '';
+                        row.style.textDecoration = '';
+                    }
+                } else {
+                    const body = await resp.json().catch(() => ({}));
+                    alert((body.error && body.error.message) || 'Could not undo suppression');
+                    btn.textContent = 'Undo';
                 }
-                _showSuppressionBanner();
-            } else {
-                const body = await resp.json().catch(() => ({}));
-                const msg  = (body.error && body.error.message) || 'Could not suppress finding';
-                alert(msg);
+            } catch (err) {
+                alert('Network error: ' + err.message);
+                btn.textContent = 'Undo';
+            } finally {
+                btn.disabled = false;
+            }
+
+        } else {
+            // ── Suppress ──────────────────────────────────────────────
+            btn.disabled    = true;
+            btn.textContent = 'Suppressing…';
+            try {
+                const resp = await fetch('/api/v1/suppressions', {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        scan_id:         scanId,
+                        file:            btn.dataset.file,
+                        line_content:    btn.dataset.content,
+                        prohibited_word: btn.dataset.word,
+                        reason:          '',
+                    }),
+                });
+                if (resp.status === 201) {
+                    const entry = (await resp.json().catch(() => ({}))).data || {};
+                    if (entry.id) btn.dataset.fp = entry.id;
+                    btn.dataset.suppressed = '1';
+                    btn.classList.add('suppressed');
+                    btn.disabled    = false;
+                    btn.textContent = 'Undo';
+                    if (row) {
+                        row.style.opacity        = '0.4';
+                        row.style.textDecoration = 'line-through';
+                        row.style.transition     = 'opacity 0.3s';
+                    }
+                    _showSuppressionBanner();
+                } else {
+                    const body = await resp.json().catch(() => ({}));
+                    alert((body.error && body.error.message) || 'Could not suppress finding');
+                    btn.disabled    = false;
+                    btn.textContent = 'Suppress';
+                }
+            } catch (err) {
+                alert('Network error: ' + err.message);
                 btn.disabled    = false;
                 btn.textContent = 'Suppress';
             }
-        } catch (err) {
-            alert('Network error: ' + err.message);
-            btn.disabled    = false;
-            btn.textContent = 'Suppress';
         }
     }
 

@@ -981,6 +981,90 @@ class TestV1SuppressionsAdd(V1TestCase):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# DELETE /api/v1/suppressions/<fingerprint> — undo a session suppression
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestV1SuppressionsDelete(V1TestCase):
+
+    def _do_scan(self):
+        r = self._post_zip_scan(_make_zip({'code.py': DIRTY_PY}))
+        return self._ok_data(r)['id']
+
+    def _suppress(self, scan_id):
+        """Add a session suppression and return the fingerprint."""
+        r = self.client.post(
+            '/api/v1/suppressions',
+            data=json.dumps({
+                'scan_id': scan_id, 'file': 'code.py',
+                'line_content': "password = 'hunter2'", 'prohibited_word': 'password',
+            }),
+            content_type='application/json',
+        )
+        return self._ok_data(r)['id']
+
+    def _delete(self, fp, scan_id):
+        return self.client.delete(
+            f'/api/v1/suppressions/{fp}?scan_id={scan_id}'
+        )
+
+    def test_missing_scan_id_returns_400(self):
+        scan_id = self._do_scan()
+        fp = self._suppress(scan_id)
+        r = self.client.delete(f'/api/v1/suppressions/{fp}')
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(self._err_body(r)['code'], 'VALIDATION_ERROR')
+
+    def test_unknown_scan_id_returns_404(self):
+        r = self._delete('deadbeefdeadbeef', 'deadbeef-0000-0000-0000-000000000000')
+        self.assertEqual(r.status_code, 404)
+        self.assertEqual(self._err_body(r)['code'], 'NOT_FOUND')
+
+    def test_unknown_fingerprint_returns_404(self):
+        scan_id = self._do_scan()
+        r = self._delete('deadbeefdeadbeef', scan_id)
+        self.assertEqual(r.status_code, 404)
+
+    def test_valid_delete_returns_204(self):
+        scan_id = self._do_scan()
+        fp = self._suppress(scan_id)
+        r = self._delete(fp, scan_id)
+        self.assertEqual(r.status_code, 204)
+
+    def test_delete_removes_from_session_suppressions(self):
+        scan_id = self._do_scan()
+        fp = self._suppress(scan_id)
+        self._delete(fp, scan_id)
+        record = web_module.scan_store[scan_id]
+        self.assertNotIn(fp, record['session_suppressions'])
+
+    def test_delete_does_not_affect_other_suppressions(self):
+        scan_id = self._do_scan()
+        fp1 = self._suppress(scan_id)
+        # Add a second suppression with different data
+        r2 = self.client.post(
+            '/api/v1/suppressions',
+            data=json.dumps({
+                'scan_id': scan_id, 'file': 'other.py',
+                'line_content': "secret = 'x'", 'prohibited_word': 'secret',
+            }),
+            content_type='application/json',
+        )
+        fp2 = self._ok_data(r2)['id']
+        self._delete(fp1, scan_id)
+        record = web_module.scan_store[scan_id]
+        self.assertNotIn(fp1, record['session_suppressions'])
+        self.assertIn(fp2, record['session_suppressions'])
+
+    def test_delete_does_not_touch_global_file(self):
+        scan_id = self._do_scan()
+        fp = self._suppress(scan_id)
+        existed_before = os.path.exists(web_module._SUPPRESSIONS_FILE)
+        self._delete(fp, scan_id)
+        if not existed_before:
+            self.assertFalse(os.path.exists(web_module._SUPPRESSIONS_FILE))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # GET /api/v1/scans/<uuid>/suppressions/export
 # ══════════════════════════════════════════════════════════════════════════════
 
