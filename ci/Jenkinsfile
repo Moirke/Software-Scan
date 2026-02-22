@@ -23,6 +23,7 @@ pipeline {
         IMAGE_NAME = 'repo-scanner'
         IMAGE_TAG  = "${env.BUILD_NUMBER}"
         TAR_FILE   = "repo-scanner-${env.BUILD_NUMBER}.tar.gz"
+        PATH       = "/usr/local/bin:${env.PATH}"
     }
 
     stages {
