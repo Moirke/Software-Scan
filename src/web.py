@@ -2,6 +2,7 @@
 Web Interface for Repository Scanner
 """
 from flask import Flask, render_template, request, jsonify, send_file, Response
+import csv
 import base64
 import io
 import ipaddress
@@ -947,6 +948,30 @@ def export_scan_pdf(scan_id):
     )
 
 
+def _results_to_csv(record: dict) -> io.BytesIO:
+    """Serialise a scan record's results list to a CSV byte buffer."""
+    buf = io.StringIO()
+    fields = ['file', 'line_number', 'prohibited_word', 'match_type',
+              'position', 'line_content']
+    writer = csv.DictWriter(buf, fieldnames=fields, extrasaction='ignore',
+                            lineterminator='\n')
+    writer.writeheader()
+    for row in record.get('results', []):
+        writer.writerow(row)
+    return io.BytesIO(buf.getvalue().encode('utf-8'))
+
+
+@app.route('/api/export/<int:scan_id>/csv')
+def export_scan_csv(scan_id):
+    """Export scan results as CSV."""
+    if scan_id >= len(scan_history):
+        return jsonify({'error': 'Scan not found'}), 404
+
+    buf      = _results_to_csv(scan_history[scan_id])
+    filename = f"scan_results_{scan_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    return send_file(buf, mimetype='text/csv', as_attachment=True, download_name=filename)
+
+
 # ── API v1 ─────────────────────────────────────────────────────────────────
 #
 # All responses use a consistent envelope:
@@ -1242,6 +1267,18 @@ def v1_export_pdf(scan_uuid):
     filename  = f"scan_{scan_uuid[:8]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
     return send_file(io.BytesIO(pdf_bytes), mimetype='application/pdf',
                      as_attachment=True, download_name=filename)
+
+
+@app.route('/api/v1/scans/<scan_uuid>/export.csv', methods=['GET'])
+def v1_export_csv(scan_uuid):
+    """Download violations as CSV."""
+    record = _v1_get_scan(scan_uuid)
+    if record is None:
+        return _v1_err('NOT_FOUND', f'Scan {scan_uuid} not found', 404)
+
+    buf      = _results_to_csv(record)
+    filename = f"scan_{scan_uuid[:8]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    return send_file(buf, mimetype='text/csv', as_attachment=True, download_name=filename)
 
 
 # ── v1: suppressions ───────────────────────────────────────────────────────

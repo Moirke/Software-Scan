@@ -773,6 +773,10 @@
                target="_blank" rel="noopener">
                 ↓ Download PDF Report
             </a>
+            <a id="csvButton" class="btn-outline" style="display:none"
+               target="_blank" rel="noopener">
+                ↓ Download CSV
+            </a>
         </div>
     </div>
 
@@ -1121,6 +1125,10 @@
         pdfBtn.href  = `/api/export/${data.scan_id}/pdf`;
         pdfBtn.style.display = 'inline-flex';
 
+        const csvBtn = document.getElementById('csvButton');
+        csvBtn.href  = `/api/export/${data.scan_id}/csv`;
+        csvBtn.style.display = data.total_violations > 0 ? 'inline-flex' : 'none';
+
         if (data.total_violations === 0) {
             setResults(alertHtml('ok', '✔', 'No prohibited words found — repository is clean.'));
             showFeedbackWidget(data.scan_id);
@@ -1221,6 +1229,7 @@
         scanButton.disabled = true;
         scanButton.querySelector('span').textContent = 'Scanning\u2026';
         document.getElementById('pdfButton').style.display = 'none';
+        document.getElementById('csvButton').style.display = 'none';
         document.getElementById('feedbackWidget').style.display = 'none';
         showProgress(initMsgs[currentSource] || 'Scanning\u2026');
 
@@ -1295,6 +1304,7 @@
                         setResults(alertHtml('error', '✖',
                             `<strong>Error:</strong> ${escapeHtml(event.data.error)}`));
                         document.getElementById('pdfButton').style.display = 'none';
+                        document.getElementById('csvButton').style.display = 'none';
                         return;
                     }
                 }
