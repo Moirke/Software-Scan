@@ -683,5 +683,188 @@ class TestPdfExport(WebTestCase):
         self.assertIn('max_file_size_mb', detail)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Scan progress streaming  (/api/scan/stream)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestScanStream(WebTestCase):
+    """
+    Tests for POST /api/scan/stream.
+
+    Flask's test client buffers the entire streaming response, so r.data
+    contains all SSE events concatenated — we can assert on the full content.
+    """
+
+    def _stream_zip(self, zip_bytes, words=WORDS_FILE_BYTES):
+        return self.client.post('/api/scan/stream', data={
+            'source_type':           'zip',
+            'config_source_type':    'upload',
+            'zip_file':              (io.BytesIO(zip_bytes), 'test.zip'),
+            'prohibited_words_file': (io.BytesIO(words),    'words.txt'),
+        }, content_type='multipart/form-data')
+
+    def _parse_sse(self, r):
+        """Return list of (event_type, data_dict) from a streaming response."""
+        events = []
+        for block in r.data.decode().split('\n\n'):
+            block = block.strip()
+            if not block:
+                continue
+            event_type = 'message'
+            data = None
+            for line in block.split('\n'):
+                if line.startswith('event: '):
+                    event_type = line[7:].strip()
+                elif line.startswith('data: '):
+                    try:
+                        data = json.loads(line[6:])
+                    except Exception:
+                        data = line[6:]
+            if data is not None:
+                events.append((event_type, data))
+        return events
+
+    def test_stream_endpoint_returns_event_stream(self):
+        r = self._stream_zip(_make_zip({'f.py': CLEAN_PY}))
+        self.assertIn('text/event-stream', r.content_type)
+
+    def test_stream_clean_scan_complete_event(self):
+        r = self._stream_zip(_make_zip({'f.py': CLEAN_PY}))
+        events = self._parse_sse(r)
+        types = [e for e, _ in events]
+        self.assertIn('complete', types)
+
+    def test_stream_dirty_scan_complete_event(self):
+        r = self._stream_zip(_make_zip({'f.py': DIRTY_PY}))
+        events = self._parse_sse(r)
+        complete = [d for e, d in events if e == 'complete']
+        self.assertEqual(len(complete), 1)
+        self.assertGreater(complete[0]['total_violations'], 0)
+
+    def test_stream_complete_payload_matches_api_scan(self):
+        """The complete event must have the same shape as /api/scan's JSON."""
+        r = self._stream_zip(_make_zip({'f.py': DIRTY_PY}))
+        events = self._parse_sse(r)
+        data = next(d for e, d in events if e == 'complete')
+        for field in ('scan_id', 'total_violations', 'exact_violations',
+                      'partial_violations', 'results'):
+            self.assertIn(field, data, msg=f'Missing field in complete payload: {field}')
+
+    def test_stream_emits_phase_events(self):
+        r = self._stream_zip(_make_zip({'f.py': CLEAN_PY}))
+        events = self._parse_sse(r)
+        phase_events = [d for e, d in events if e == 'phase']
+        self.assertGreater(len(phase_events), 0)
+        self.assertTrue(all('message' in d for d in phase_events))
+
+    def test_stream_no_error_event_on_success(self):
+        r = self._stream_zip(_make_zip({'f.py': CLEAN_PY}))
+        events = self._parse_sse(r)
+        error_events = [d for e, d in events if e == 'error']
+        self.assertEqual(error_events, [])
+
+    def test_stream_error_event_on_missing_zip(self):
+        r = self.client.post('/api/scan/stream', data={
+            'source_type':           'zip',
+            'config_source_type':    'upload',
+            'prohibited_words_file': (io.BytesIO(WORDS_FILE_BYTES), 'words.txt'),
+        }, content_type='multipart/form-data')
+        events = self._parse_sse(r)
+        types = [e for e, _ in events]
+        self.assertIn('error', types)
+        self.assertNotIn('complete', types)
+
+    def test_stream_scan_id_stored_in_history(self):
+        r = self._stream_zip(_make_zip({'f.py': DIRTY_PY}))
+        self._parse_sse(r)  # consume stream so background thread finishes
+        history = self.client.get('/api/history').get_json()
+        self.assertEqual(len(history), 1)
+
+    def test_stream_scan_retrievable_by_id(self):
+        r = self._stream_zip(_make_zip({'f.py': DIRTY_PY}))
+        events = self._parse_sse(r)
+        data = next(d for e, d in events if e == 'complete')
+        detail = self.client.get(f'/api/scan/{data["scan_id"]}').get_json()
+        self.assertIn('results', detail)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Feedback endpoint
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestFeedback(WebTestCase):
+
+    def setUp(self):
+        super().setUp()
+        # Point feedback writes at a temp file so tests don't touch the filesystem
+        self._feedback_file = os.path.join(self.tmpdir, 'feedback.log')
+        import src.web as wm
+        self._orig_feedback_file = wm._FEEDBACK_FILE
+        wm._FEEDBACK_FILE = self._feedback_file
+
+    def tearDown(self):
+        import src.web as wm
+        wm._FEEDBACK_FILE = self._orig_feedback_file
+        super().tearDown()
+
+    def _post_feedback(self, payload):
+        return self.client.post(
+            '/api/feedback',
+            data=json.dumps(payload),
+            content_type='application/json',
+        )
+
+    def test_valid_rating_returns_201(self):
+        r = self._post_feedback({'rating': 4, 'scan_id': '42'})
+        self.assertEqual(r.status_code, 201)
+        self.assertTrue(r.get_json()['success'])
+
+    def test_feedback_written_to_file(self):
+        self._post_feedback({'rating': 5, 'scan_id': '1', 'comment': 'great'})
+        with open(self._feedback_file, encoding='utf-8') as f:
+            entry = json.loads(f.readline())
+        self.assertEqual(entry['rating'],  5)
+        self.assertEqual(entry['comment'], 'great')
+        self.assertEqual(entry['scan_id'], '1')
+
+    def test_all_five_star_ratings_accepted(self):
+        for rating in range(1, 6):
+            r = self._post_feedback({'rating': rating})
+            self.assertEqual(r.status_code, 201, f'rating={rating} was rejected')
+
+    def test_rating_zero_returns_400(self):
+        r = self._post_feedback({'rating': 0})
+        self.assertEqual(r.status_code, 400)
+
+    def test_rating_six_returns_400(self):
+        r = self._post_feedback({'rating': 6})
+        self.assertEqual(r.status_code, 400)
+
+    def test_missing_rating_returns_400(self):
+        r = self._post_feedback({'comment': 'no rating here'})
+        self.assertEqual(r.status_code, 400)
+
+    def test_string_rating_returns_400(self):
+        r = self._post_feedback({'rating': 'five'})
+        self.assertEqual(r.status_code, 400)
+
+    def test_comment_is_optional(self):
+        r = self._post_feedback({'rating': 3})
+        self.assertEqual(r.status_code, 201)
+
+    def test_multiple_entries_appended(self):
+        self._post_feedback({'rating': 4})
+        self._post_feedback({'rating': 2, 'comment': 'second'})
+        with open(self._feedback_file, encoding='utf-8') as f:
+            lines = [l for l in f if l.strip()]
+        self.assertEqual(len(lines), 2)
+
+    def test_entry_has_timestamp(self):
+        self._post_feedback({'rating': 3})
+        with open(self._feedback_file, encoding='utf-8') as f:
+            entry = json.loads(f.readline())
+        self.assertIn('timestamp', entry)
+
+
 if __name__ == '__main__':
     unittest.main()

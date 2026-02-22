@@ -11,16 +11,16 @@ from typing import Any
 
 from fpdf import FPDF
 
-# ── Colour palette (R, G, B) ──────────────────────────────────────────────────
-_ACCENT   = (90,  103, 216)   # indigo  — header bar, section underlines
-_DARK     = (28,   30,  46)   # near-black body text
-_MUTED    = (107, 114, 128)   # grey    — labels, secondary text
-_EXACT    = (185,  28,  28)   # dark red   — exact-match word badges
-_PARTIAL  = (161,  70,   0)   # dark amber — partial-match word badges
-_STRIPE   = (247, 248, 252)   # light blue-grey alternating row stripe
-_FILE_BG  = (237, 239, 248)   # slightly darker stripe for file-path rows
-_WHITE    = (255, 255, 255)
-_OK_GREEN = (21,  128,  61)   # green for clean-repo message
+# ── Greyscale palette (R, G, B) ───────────────────────────────────────────────
+# Print-safe — no ink colour required.  Contrast is driven by fill tones,
+# bold weight, and underline rather than hue.
+_HEADER_BG = (30,  30,  30)   # near-black  — page header bar
+_DARK      = (20,  20,  20)   # near-black  — primary text
+_MUTED     = (110, 110, 110)  # mid-grey    — labels / secondary text
+_RULE      = (60,  60,  60)   # dark grey   — section underline rules
+_STRIPE    = (242, 242, 242)  # light grey  — alternating row tint
+_FILE_BG   = (210, 210, 210)  # medium grey — file-path header rows
+_WHITE     = (255, 255, 255)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -45,7 +45,7 @@ class _ScanReport(FPDF):
     """Adds a branded header bar and page-number footer to every page."""
 
     def header(self):
-        self.set_fill_color(*_ACCENT)
+        self.set_fill_color(*_HEADER_BG)
         self.rect(0, 0, self.w, 11, style='F')
         self.set_y(2)
         self.set_font('Helvetica', 'B', 10)
@@ -70,7 +70,7 @@ def _section_heading(pdf: _ScanReport, title: str) -> None:
     pdf.set_text_color(*_DARK)
     pdf.cell(0, 8, title, new_x='LMARGIN', new_y='NEXT')
     y = pdf.get_y()
-    pdf.set_draw_color(*_ACCENT)
+    pdf.set_draw_color(*_RULE)
     pdf.set_line_width(0.4)
     pdf.line(pdf.l_margin, y, pdf.w - pdf.r_margin, y)
     pdf.set_line_width(0.2)
@@ -106,11 +106,23 @@ def _word_list(pdf: _ScanReport, words: list[str]) -> None:
     pdf.multi_cell(0, 5.5, _safe(',  '.join(words), 3000), fill=True, align='L')
 
 
-def _findings_table(pdf: _ScanReport, by_file: dict, badge_color: tuple) -> None:
-    """Render violations grouped by file."""
+def _findings_table(pdf: _ScanReport, by_file: dict, is_exact: bool) -> None:
+    """Render violations grouped by file.
+
+    Contrast is achieved without colour:
+      exact matches   — bold + underline, near-black
+      partial matches — bold italic, mid-grey
+    """
     col_line    = 14
     col_word    = 34
     col_content = pdf.epw - col_line - col_word
+
+    if is_exact:
+        word_style = 'BU'          # bold + underline
+        word_color = _DARK
+    else:
+        word_style = 'BI'          # bold italic
+        word_color = _MUTED
 
     for file_path, violations in by_file.items():
         # File path header row
@@ -139,8 +151,8 @@ def _findings_table(pdf: _ScanReport, by_file: dict, badge_color: tuple) -> None
             pdf.set_text_color(*_MUTED)
             pdf.cell(col_line, 5.5, str(v['line_number']), fill=True)
 
-            pdf.set_font('Helvetica', 'B', 8)
-            pdf.set_text_color(*badge_color)
+            pdf.set_font('Helvetica', word_style, 8)
+            pdf.set_text_color(*word_color)
             pdf.cell(col_word, 5.5, _safe(v['prohibited_word'], 28), fill=True)
 
             pdf.set_font('Courier', '', 7.5)
@@ -220,14 +232,14 @@ def generate_pdf(scan_record: dict[str, Any]) -> bytes:
     if not results:
         _section_heading(pdf, 'Findings')
         pdf.set_font('Helvetica', 'B', 10)
-        pdf.set_text_color(*_OK_GREEN)
+        pdf.set_text_color(*_DARK)
         pdf.cell(0, 8, 'No prohibited words found - repository is clean.',
                  new_x='LMARGIN', new_y='NEXT')
         return bytes(pdf.output())
 
     _section_heading(pdf, f'Exact Matches  ({exact_c})')
     if exact_r:
-        _findings_table(pdf, by_file_exact, _EXACT)
+        _findings_table(pdf, by_file_exact, is_exact=True)
     else:
         pdf.set_font('Helvetica', 'I', 8.5)
         pdf.set_text_color(*_MUTED)
@@ -235,7 +247,7 @@ def generate_pdf(scan_record: dict[str, Any]) -> bytes:
 
     _section_heading(pdf, f'Partial Matches  ({partial_c})')
     if partial_r:
-        _findings_table(pdf, by_file_partial, _PARTIAL)
+        _findings_table(pdf, by_file_partial, is_exact=False)
     else:
         pdf.set_font('Helvetica', 'I', 8.5)
         pdf.set_text_color(*_MUTED)

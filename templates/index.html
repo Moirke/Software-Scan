@@ -488,6 +488,78 @@
 
         .metrics-loading { color: var(--text-subtle); font-size: 0.85rem; padding: 8px 0; }
 
+        /* ── Scan progress ──────────────────────────────────────────── */
+        .progress-track {
+            position: relative;
+            width: 100%;
+            height: 3px;
+            background: var(--border);
+            border-radius: 999px;
+            overflow: hidden;
+            margin: 12px 0 8px;
+        }
+        .progress-fill {
+            position: absolute;
+            height: 100%;
+            width: 38%;
+            background: var(--accent);
+            border-radius: 999px;
+            animation: scan-slide 1.5s ease-in-out infinite;
+        }
+        @keyframes scan-slide {
+            0%   { left: -40%; }
+            100% { left: 110%; }
+        }
+        .progress-detail {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            min-height: 1.1em;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .progress-count { font-weight: 600; color: var(--text); }
+
+        /* ── Feedback widget ────────────────────────────────────────── */
+        .feedback-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-md);
+            padding: 22px 28px;
+            margin-top: 16px;
+            transition: background var(--transition), border-color var(--transition);
+        }
+        .feedback-title { font-size: 0.9rem; font-weight: 600; color: var(--text); margin-bottom: 12px; }
+        .star-row { display: flex; gap: 4px; margin-bottom: 12px; }
+        .star-btn {
+            background: none; border: none;
+            font-size: 1.75rem; line-height: 1;
+            cursor: pointer; padding: 0 3px;
+            color: var(--border);
+            transition: color var(--transition), transform 0.1s ease;
+        }
+        .star-btn.lit  { color: #f59e0b; }
+        .star-btn:hover { transform: scale(1.2); }
+        .feedback-comment {
+            width: 100%; padding: 9px 12px;
+            background: var(--surface-alt); border: 1px solid var(--border);
+            border-radius: var(--radius);
+            font-size: 0.875rem; font-family: inherit; color: var(--text);
+            resize: vertical; min-height: 68px; box-sizing: border-box;
+            transition: border-color var(--transition), box-shadow var(--transition);
+        }
+        .feedback-comment:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+        .feedback-actions { display: flex; align-items: center; gap: 14px; margin-top: 10px; }
+        .feedback-skip {
+            background: none; border: none;
+            font-size: 0.82rem; color: var(--text-subtle);
+            cursor: pointer; padding: 0;
+            text-decoration: underline; text-underline-offset: 2px;
+        }
+        .feedback-skip:hover { color: var(--text-muted); }
+        .feedback-thanks { font-size: 0.9rem; color: var(--ok-text); }
+
         @media (max-width: 540px) {
             .header { flex-direction: column; align-items: flex-start; gap: 12px; }
             .page   { padding: 20px 14px 40px; }
@@ -620,20 +692,14 @@
         <!-- Git repo -->
         <div id="cfg-git" style="display:none;">
             <div class="form-group">
-                <label for="config_git_url">Config repository URL</label>
+                <label for="config_git_url">
+                    URL to config file or folder
+                    <span class="hint">— include the filename, or point to a folder and we'll look for prohibited_words.txt</span>
+                </label>
                 <input type="url" id="config_git_url"
-                       placeholder="https://github.com/org/config-repo"
+                       placeholder="https://github.com/org/repo/config/words.txt"
                        autocomplete="url" spellcheck="false"
                        oninput="checkSameRepo()">
-            </div>
-            <div class="form-group">
-                <label for="config_file_path">
-                    Path to words file within repo
-                    <span class="hint">— defaults to prohibited_words.txt</span>
-                </label>
-                <input type="text" id="config_file_path"
-                       placeholder="prohibited_words.txt"
-                       spellcheck="false">
             </div>
             <div class="same-repo-hint" id="sameRepoHint">
                 <span>ℹ</span>
@@ -685,6 +751,28 @@
 
     <!-- Results -->
     <div id="results"></div>
+
+    <!-- Feedback widget — shown after each successful scan -->
+    <div id="feedbackWidget" style="display:none;" class="feedback-card">
+        <div class="feedback-title">
+            How did this scan go?
+            <span style="font-weight:400;color:var(--text-muted)"> — optional</span>
+        </div>
+        <div class="star-row">
+            <button class="star-btn" onclick="selectStar(1)" title="1 star">☆</button>
+            <button class="star-btn" onclick="selectStar(2)" title="2 stars">☆</button>
+            <button class="star-btn" onclick="selectStar(3)" title="3 stars">☆</button>
+            <button class="star-btn" onclick="selectStar(4)" title="4 stars">☆</button>
+            <button class="star-btn" onclick="selectStar(5)" title="5 stars">☆</button>
+        </div>
+        <textarea id="feedbackComment" class="feedback-comment"
+                  placeholder="Any comments? (optional)"></textarea>
+        <div class="feedback-actions">
+            <button class="btn-outline" onclick="submitFeedback()"
+                    style="padding:7px 18px;font-size:0.82rem">Submit feedback</button>
+            <button class="feedback-skip" onclick="dismissFeedback()">Skip</button>
+        </div>
+    </div>
 
 </div>
 
@@ -798,16 +886,109 @@
     bindDropZone('fileZone', 'prohibited_words_file', 'wordsName');
     bindDropZone('zipZone',  'zip_file',              'zipName');
 
+    /* ── Progress display ───────────────────────────────────────────── */
+    function showProgress(message) {
+        // Directly update the results div without triggering metrics refresh
+        document.getElementById('results').innerHTML = `
+            <div class="loading" style="padding-bottom:6px">
+                <div class="spinner"></div>
+                <span id="phaseText">${escapeHtml(message)}</span>
+            </div>
+            <div class="progress-track"><div class="progress-fill"></div></div>
+            <div class="progress-detail" id="progressDetail"></div>`;
+    }
+
+    function updatePhase(message) {
+        const el = document.getElementById('phaseText');
+        if (el) el.textContent = message;
+    }
+
+    function updateFileProgress(n, filename) {
+        const el = document.getElementById('progressDetail');
+        if (el) el.innerHTML =
+            `<span class="progress-count">${n}</span> files scanned · ${escapeHtml(filename)}`;
+    }
+
+    /* ── SSE parsing ────────────────────────────────────────────────── */
+    function parseSseEvent(text) {
+        let type = 'message', data = null;
+        for (const line of text.split('\n')) {
+            if (line.startsWith('event: ')) type = line.slice(7).trim();
+            else if (line.startsWith('data: ')) {
+                try { data = JSON.parse(line.slice(6)); } catch (_) {}
+            }
+        }
+        return data !== null ? { type, data } : null;
+    }
+
+    /* ── Result rendering (shared by scan stream and any future callers) */
+    function renderGroup(violations, badgeClass) {
+        if (!violations.length) return '';
+        const byFile = {};
+        violations.forEach(r => { (byFile[r.file] = byFile[r.file] || []).push(r); });
+        let h = '';
+        for (const [file, vs] of Object.entries(byFile)) {
+            h += `<div class="violation">`;
+            h += `<div class="violation-file">📄 ${escapeHtml(file)}</div>`;
+            vs.forEach(v => {
+                h += `<div class="violation-row">`;
+                h += `<span class="line-num">line ${v.line_number}</span>`;
+                h += `<span class="violation-word ${badgeClass}">${escapeHtml(v.prohibited_word)}</span>`;
+                h += `<span class="violation-line">${escapeHtml(v.line_content)}</span>`;
+                h += `</div>`;
+            });
+            h += `</div>`;
+        }
+        return h;
+    }
+
+    function displayScanResult(data) {
+        const pdfBtn = document.getElementById('pdfButton');
+        pdfBtn.href  = `/api/export/${data.scan_id}/pdf`;
+        pdfBtn.style.display = 'inline-flex';
+
+        if (data.total_violations === 0) {
+            setResults(alertHtml('ok', '✔', 'No prohibited words found — repository is clean.'));
+            showFeedbackWidget(data.scan_id);
+            return;
+        }
+
+        const uniqueFiles       = new Set(data.results.map(r => r.file)).size;
+        const exactViolations   = data.exact_violations   || 0;
+        const partialViolations = data.partial_violations || 0;
+        const exact             = data.results.filter(r => r.match_type === 'exact');
+        const partial           = data.results.filter(r => r.match_type === 'partial');
+
+        let html = `<div class="results-heading">Scan results</div>`;
+        html += `<div class="stats-bar">
+            ${statCard(data.total_violations, 'Total')}
+            ${statCard(exactViolations,       'Exact')}
+            ${statCard(partialViolations,     'Partial')}
+            ${statCard(uniqueFiles,           'Files affected')}
+        </div>`;
+
+        if (exact.length)
+            html += `<div class="results-heading">Exact matches</div>${renderGroup(exact, '')}`;
+        if (partial.length)
+            html += `<div class="results-heading" style="margin-top:24px">Partial matches</div>${renderGroup(partial, 'partial')}`;
+
+        if (data.has_more)
+            html += alertHtml('info', 'ℹ', 'Showing the first 100 results. Export the full scan to see all violations.');
+
+        setResults(html);
+        showFeedbackWidget(data.scan_id);
+    }
+
     /* ── Scan ───────────────────────────────────────────────────────── */
     async function runScan() {
         const caseSensitive = document.getElementById('case_sensitive').checked;
         const maxSize       = document.getElementById('max_file_size_mb').value.trim();
-        const resultsDiv    = document.getElementById('results');
         const scanButton    = document.getElementById('scanButton');
+        const wordsInput    = document.getElementById('prohibited_words_file');
+        const zipInput      = document.getElementById('zip_file');
 
         // ── Validate scan target ──────────────────────────────────────
-        const repoUrl    = document.getElementById('repo_url').value.trim();
-        const zipInput   = document.getElementById('zip_file');
+        const repoUrl = document.getElementById('repo_url').value.trim();
 
         if (currentSource !== 'zip' && !repoUrl) {
             setResults(alertHtml('error', '⚠️', 'Please enter a repository URL.')); return;
@@ -817,9 +998,8 @@
         }
 
         // ── Validate config source ────────────────────────────────────
-        const wordsInput    = document.getElementById('prohibited_words_file');
-        const serverPath    = document.getElementById('config_server_path').value.trim();
-        const cfgGitUrl     = document.getElementById('config_git_url').value.trim();
+        const serverPath = document.getElementById('config_server_path').value.trim();
+        const cfgGitUrl  = document.getElementById('config_git_url').value.trim();
 
         if (currentConfigSource === 'upload' && !wordsInput.files.length) {
             setResults(alertHtml('error', '⚠️', 'Please select a prohibited words file.')); return;
@@ -831,16 +1011,17 @@
             setResults(alertHtml('error', '⚠️', 'Please enter a git URL for the config repository.')); return;
         }
 
-        // ── Loading state ─────────────────────────────────────────────
-        const loadingMsgs = {
-            git:          'Cloning repository and scanning…',
-            artifactory:  'Connecting to Artifactory and downloading artifacts…',
-            zip:          'Extracting and scanning ZIP…',
+        // ── Initial UI state ──────────────────────────────────────────
+        const initMsgs = {
+            git:         'Cloning repository\u2026',
+            artifactory: 'Connecting to Artifactory\u2026',
+            zip:         'Preparing scan\u2026',
         };
         scanButton.disabled = true;
-        scanButton.querySelector('span').textContent = 'Scanning…';
+        scanButton.querySelector('span').textContent = 'Scanning\u2026';
         document.getElementById('pdfButton').style.display = 'none';
-        setResults(`<div class="loading"><div class="spinner"></div><span>${loadingMsgs[currentSource]}</span></div>`);
+        document.getElementById('feedbackWidget').style.display = 'none';
+        showProgress(initMsgs[currentSource] || 'Scanning\u2026');
 
         // ── Build form data ───────────────────────────────────────────
         const formData = new FormData();
@@ -865,77 +1046,61 @@
             formData.append('prohibited_words_file', wordsInput.files[0]);
         else if (currentConfigSource === 'server_path')
             formData.append('config_server_path', serverPath);
-        else if (currentConfigSource === 'git_repo') {
-            formData.append('config_git_url',   cfgGitUrl);
-            formData.append('config_file_path',
-                document.getElementById('config_file_path').value.trim() || 'prohibited_words.txt');
-        }
+        else if (currentConfigSource === 'git_repo')
+            formData.append('config_git_url', cfgGitUrl);
 
+        // ── Stream SSE events ─────────────────────────────────────────
         try {
-            const response = await fetch('/api/scan', { method: 'POST', body: formData });
-            const data = await response.json();
+            const response = await fetch('/api/scan/stream', {
+                method: 'POST', body: formData,
+            });
 
-            if (data.error) {
-                setResults(alertHtml('error', '✖', `<strong>Error:</strong> ${escapeHtml(data.error)}`));
-                document.getElementById('pdfButton').style.display = 'none';
+            if (!response.body) {
+                // Fallback for environments without ReadableStream
+                const data = await response.json();
+                if (data.error) throw new Error(data.error);
+                displayScanResult(data);
                 return;
             }
 
-            // Show PDF download button now that we have a scan ID
-            const pdfBtn = document.getElementById('pdfButton');
-            pdfBtn.href  = `/api/export/${data.scan_id}/pdf`;
-            pdfBtn.style.display = 'inline-flex';
-            if (data.total_violations === 0) {
-                setResults(alertHtml('ok', '✔', 'No prohibited words found — repository is clean.'));
-                return;
-            }
+            const reader  = response.body.getReader();
+            const decoder = new TextDecoder();
+            let   buffer  = '';
 
-            const uniqueFiles     = new Set(data.results.map(r => r.file)).size;
-            const exactViolations   = data.exact_violations   || 0;
-            const partialViolations = data.partial_violations || 0;
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
 
-            let html = `<div class="results-heading">Scan results</div>`;
-            html += `<div class="stats-bar">`;
-            html += statCard(data.total_violations, 'Total');
-            html += statCard(exactViolations,       'Exact');
-            html += statCard(partialViolations,     'Partial');
-            html += statCard(uniqueFiles,           'Files affected');
-            html += `</div>`;
+                buffer += decoder.decode(value, { stream: true });
 
-            const exact   = data.results.filter(r => r.match_type === 'exact');
-            const partial = data.results.filter(r => r.match_type === 'partial');
+                // Consume all complete SSE events (separated by \n\n)
+                while (true) {
+                    const idx = buffer.indexOf('\n\n');
+                    if (idx === -1) break;
+                    const eventText = buffer.slice(0, idx);
+                    buffer = buffer.slice(idx + 2);
 
-            function renderGroup(violations, badgeClass) {
-                if (!violations.length) return '';
-                const byFile = {};
-                violations.forEach(r => { (byFile[r.file] = byFile[r.file] || []).push(r); });
-                let h = '';
-                for (const [file, vs] of Object.entries(byFile)) {
-                    h += `<div class="violation">`;
-                    h += `<div class="violation-file">📄 ${escapeHtml(file)}</div>`;
-                    vs.forEach(v => {
-                        h += `<div class="violation-row">`;
-                        h += `<span class="line-num">line ${v.line_number}</span>`;
-                        h += `<span class="violation-word ${badgeClass}">${escapeHtml(v.prohibited_word)}</span>`;
-                        h += `<span class="violation-line">${escapeHtml(v.line_content)}</span>`;
-                        h += `</div>`;
-                    });
-                    h += `</div>`;
+                    const event = parseSseEvent(eventText);
+                    if (!event) continue;
+
+                    if (event.type === 'phase') {
+                        updatePhase(event.data.message);
+                    } else if (event.type === 'progress') {
+                        updateFileProgress(event.data.files_scanned, event.data.current_file);
+                    } else if (event.type === 'complete') {
+                        displayScanResult(event.data);
+                        return;
+                    } else if (event.type === 'error') {
+                        setResults(alertHtml('error', '✖',
+                            `<strong>Error:</strong> ${escapeHtml(event.data.error)}`));
+                        document.getElementById('pdfButton').style.display = 'none';
+                        return;
+                    }
                 }
-                return h;
             }
-
-            if (exact.length)
-                html += `<div class="results-heading">Exact matches</div>${renderGroup(exact, '')}`;
-            if (partial.length)
-                html += `<div class="results-heading" style="margin-top:24px">Partial matches</div>${renderGroup(partial, 'partial')}`;
-
-            if (data.has_more)
-                html += alertHtml('info', 'ℹ', 'Showing the first 100 results. Export the full scan to see all violations.');
-
-            setResults(html);
         } catch (err) {
-            setResults(alertHtml('error', '✖', `<strong>Network error:</strong> ${escapeHtml(err.message)}`));
+            setResults(alertHtml('error', '✖',
+                `<strong>Network error:</strong> ${escapeHtml(err.message)}`));
         } finally {
             scanButton.disabled = false;
             scanButton.querySelector('span').textContent = 'Run Scan';
@@ -1032,6 +1197,67 @@
     // Refresh after each scan so the numbers update right away
     const _origSetResults = setResults;
     setResults = html => { _origSetResults(html); loadMetrics(); };
+
+    /* ── Feedback widget ─────────────────────────────────────────────── */
+    let _feedbackScanId  = null;
+    let _selectedRating  = 0;
+
+    function showFeedbackWidget(scanId) {
+        _feedbackScanId = scanId;
+        _selectedRating = 0;
+        const widget = document.getElementById('feedbackWidget');
+        widget.style.display = '';
+        widget.innerHTML = `
+            <div class="feedback-title">
+                How did this scan go?
+                <span style="font-weight:400;color:var(--text-muted)"> — optional</span>
+            </div>
+            <div class="star-row">
+                <button class="star-btn" onclick="selectStar(1)" title="1 star">☆</button>
+                <button class="star-btn" onclick="selectStar(2)" title="2 stars">☆</button>
+                <button class="star-btn" onclick="selectStar(3)" title="3 stars">☆</button>
+                <button class="star-btn" onclick="selectStar(4)" title="4 stars">☆</button>
+                <button class="star-btn" onclick="selectStar(5)" title="5 stars">☆</button>
+            </div>
+            <textarea id="feedbackComment" class="feedback-comment"
+                      placeholder="Any comments? (optional)"></textarea>
+            <div class="feedback-actions">
+                <button class="btn-outline" onclick="submitFeedback()"
+                        style="padding:7px 18px;font-size:0.82rem">Submit feedback</button>
+                <button class="feedback-skip" onclick="dismissFeedback()">Skip</button>
+            </div>`;
+    }
+
+    function selectStar(n) {
+        _selectedRating = n;
+        document.querySelectorAll('.star-btn').forEach((btn, i) => {
+            const lit = i < n;
+            btn.classList.toggle('lit', lit);
+            btn.textContent = lit ? '★' : '☆';
+        });
+    }
+
+    async function submitFeedback() {
+        if (!_selectedRating) return;
+        const comment = (document.getElementById('feedbackComment') || {}).value || '';
+        try {
+            await fetch('/api/feedback', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({
+                    scan_id: String(_feedbackScanId),
+                    rating:  _selectedRating,
+                    comment: comment.trim() || null,
+                }),
+            });
+        } catch (_) { /* silently ignore network errors */ }
+        document.getElementById('feedbackWidget').innerHTML =
+            '<div class="feedback-thanks">✔ Thanks for your feedback!</div>';
+    }
+
+    function dismissFeedback() {
+        document.getElementById('feedbackWidget').style.display = 'none';
+    }
 </script>
 </body>
 </html>
