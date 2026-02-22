@@ -30,8 +30,7 @@ from src.logging_config import LOGGER_NAME, ScanAdapter
 from src.report import generate_pdf
 from src.scanner import ProhibitedWordScanner
 from src.suppressions import (
-    load_suppressions, apply_suppressions,
-    add_suppression, remove_suppression, make_fingerprint,
+    load_suppressions, apply_suppressions, make_fingerprint,
     serialize_suppressions,
 )
 
