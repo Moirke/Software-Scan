@@ -1,6 +1,6 @@
 # TODO
 
-Things we want to improve but haven't tackled yet, roughly grouped by theme.
+Things we want to improve but haven't tackled yet.
 
 ---
 
@@ -20,13 +20,9 @@ Things we want to improve but haven't tackled yet, roughly grouped by theme.
   SAML IdP via an Nginx auth proxy, or a shared API key header for pipeline
   integrations.
 
-
-
-
 ---
 
-## Reliability and Scale
-
+## Reliability
 
 - **Git submodule support** — `git clone --depth=1` does not pull submodules.
   Repositories that store significant code in submodules will produce
@@ -35,10 +31,6 @@ Things we want to improve but haven't tackled yet, roughly grouped by theme.
 ---
 
 ## Features
-
-- **Word list management UI** — the prohibited words file is a plain text file
-  managed out-of-band. A simple CRUD interface in the web UI would make the
-  tool self-contained for non-technical users.
 
 - **Search / filter results** — add a search/filter box to the scan results
   panel so users can find results by file path, line content, or prohibited
