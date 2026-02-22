@@ -1,44 +1,39 @@
-# systemd service unit for Repository Scanner (Docker)
+# systemd service unit for Repository Scanner (on-premise)
 #
-# This unit is written by cloud-init/bootstrap scripts; do not edit manually
-# on a running instance — update cloud-init.yml instead and re-launch.
+# Install:
+#   sudo cp deploy/scanner.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now repo-scanner
 #
-# Logs:  journalctl -u scanner -f
-#        docker logs scanner
+# Logs:
+#   journalctl -u repo-scanner -f
+#   docker compose -f /opt/repo-scanner/docker-compose.yml logs -f
 
 [Unit]
 Description=Repository Scanner
+Documentation=file:///opt/repo-scanner/tutorials/deploying-to-rocky-linux.md
 After=docker.service network-online.target
 Requires=docker.service
 
 [Service]
-EnvironmentFile=/etc/scanner/scanner.env
+Type=oneshot
+RemainAfterExit=yes
 
-# Pull the latest image before starting.
-# Safe to run on every start — docker pull is a no-op if the digest matches.
-ExecStartPre=/usr/bin/docker pull SCANNER_IMAGE_PLACEHOLDER
+WorkingDirectory=/opt/repo-scanner
 
-# Remove any leftover container from a previous run.
-ExecStartPre=-/usr/bin/docker rm -f scanner
+# Start the full stack (Nginx + app) via Compose
+ExecStart=/usr/bin/docker compose up -d
 
-ExecStart=/usr/bin/docker run \
-    --name scanner \
-    --rm \
-    --env-file /etc/scanner/scanner.env \
-    -p 8080:8080 \
-    --tmpfs /tmp:rw,size=2g,mode=1777 \
-    --memory=2g \
-    --cpus=2 \
-    --log-driver=journald \
-    --log-opt tag=scanner \
-    SCANNER_IMAGE_PLACEHOLDER
+# Give in-flight scans 30 s to finish before stopping
+ExecStop=/usr/bin/docker compose stop --timeout 30
 
-# Give in-flight scans 30 s to finish before SIGKILL.
-ExecStop=/usr/bin/docker stop -t 30 scanner
+# If the service is restarted, bring the stack down cleanly first
+ExecStopPost=/usr/bin/docker compose down
 
 Restart=on-failure
 RestartSec=10
-TimeoutStartSec=120
+TimeoutStartSec=60
+TimeoutStopSec=60
 
 [Install]
 WantedBy=multi-user.target
