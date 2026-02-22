@@ -43,13 +43,8 @@ Things we want to improve but haven't tackled yet, roughly grouped by theme.
   and the client polls for completion.
 
 - **Per-scan resource limits** — no cap on how much disk a single scan can
-  consume during archive extraction. A deeply nested or very large archive could
-  fill the tmpfs. Add a per-scan disk quota and abort cleanly when it is
-  exceeded.
-
-- **Archive nesting depth limit** — the scanner recurses into archives
-  indefinitely (zip inside zip inside zip...). Add a configurable max depth to
-  prevent pathological inputs from consuming unbounded resources.
+  consume during archive extraction. A very large archive could fill the tmpfs.
+  Add a per-scan disk quota and abort cleanly when it is exceeded.
 
 - **Git submodule support** — `git clone --depth=1` does not pull submodules.
   Repositories that store significant code in submodules will produce
@@ -73,10 +68,3 @@ Things we want to improve but haven't tackled yet, roughly grouped by theme.
 - **Word list management UI** — the prohibited words file is a plain text file
   managed out-of-band. A simple CRUD interface in the web UI would make the
   tool self-contained for non-technical users.
-
-- **Result export formats** — JSON and PDF exports are in place. CSV export
-  would make results easier to share with stakeholders who work in spreadsheets.
-
-- **Scan result pagination in the UI** — the web UI caps display at 100 results
-  with an "export for full results" message. Proper pagination would avoid
-  forcing the user to download a file just to see result 101.
