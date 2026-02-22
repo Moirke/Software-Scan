@@ -1302,8 +1302,9 @@
                     btn.classList.remove('suppressed');
                     btn.textContent = 'Suppress';
                     if (row) {
-                        row.style.opacity        = '';
-                        row.style.textDecoration = '';
+                        row.style.opacity = '';
+                        row.querySelectorAll('.line-num, .violation-word, .violation-line')
+                           .forEach(el => el.style.textDecoration = '');
                     }
                 } else {
                     const body = await resp.json().catch(() => ({}));
@@ -1341,9 +1342,10 @@
                     btn.disabled    = false;
                     btn.textContent = 'Undo';
                     if (row) {
-                        row.style.opacity        = '0.4';
-                        row.style.textDecoration = 'line-through';
-                        row.style.transition     = 'opacity 0.3s';
+                        row.style.opacity   = '0.4';
+                        row.style.transition = 'opacity 0.3s';
+                        row.querySelectorAll('.line-num, .violation-word, .violation-line')
+                           .forEach(el => el.style.textDecoration = 'line-through');
                     }
                     _showSuppressionBanner();
                 } else {
