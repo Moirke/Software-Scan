@@ -451,7 +451,15 @@
             padding: 14px 16px;
             margin-bottom: 10px;
         }
-        .violation-file { font-size: 0.85rem; font-weight: 600; color: var(--text); margin-bottom: 8px; word-break: break-all; }
+        .violation-file {
+            display: flex; align-items: center; gap: 6px;
+            font-size: 0.85rem; font-weight: 600; color: var(--text);
+            margin-bottom: 8px; word-break: break-all;
+            cursor: pointer; user-select: none;
+        }
+        .violation-file:hover { color: var(--accent); }
+        .violation-toggle { font-size: 0.7rem; color: var(--text-subtle); flex-shrink: 0; transition: color var(--transition); }
+        .violation-file:hover .violation-toggle { color: var(--accent); }
         .violation-row  { display: flex; align-items: baseline; gap: 8px; margin: 5px 0; font-family: 'SF Mono','Fira Code','Monaco',monospace; font-size: 0.8rem; }
         .line-num       { color: var(--text-subtle); font-size: 0.75rem; min-width: 52px; flex-shrink: 0; }
         .violation-word         { background: #ef4444; color: white; padding: 1px 5px; border-radius: 4px; font-weight: 700; font-size: 0.75rem; flex-shrink: 0; }
@@ -995,7 +1003,9 @@
         let h = '';
         for (const [file, vs] of Object.entries(byFile)) {
             h += `<div class="violation">`;
-            h += `<div class="violation-file">📄 ${escapeHtml(file)}</div>`;
+            h += `<div class="violation-file" onclick="toggleViolationGroup(this)">` +
+                 `<span class="violation-toggle">&#9660;</span>📄 ${escapeHtml(file)}</div>`;
+            h += `<div class="violation-rows">`;
             vs.forEach(v => {
                 const fp      = v.fingerprint   || '';
                 const relFile = v.relative_file || file;
@@ -1013,7 +1023,8 @@
                 }
                 h += `</div>`;
             });
-            h += `</div>`;
+            h += `</div>`;  // .violation-rows
+            h += `</div>`;  // .violation
         }
         return h;
     }
@@ -1439,6 +1450,14 @@
             <div class="stat-num">${num}</div>
             <div class="stat-label">${label}</div>
         </div>`;
+    }
+
+    function toggleViolationGroup(header) {
+        const rows = header.nextElementSibling;
+        const icon = header.querySelector('.violation-toggle');
+        const collapsed = rows.style.display === 'none';
+        rows.style.display = collapsed ? '' : 'none';
+        icon.innerHTML    = collapsed ? '&#9660;' : '&#9654;';
     }
 
     function setFilter(filter) {
