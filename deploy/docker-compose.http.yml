@@ -1,0 +1,90 @@
+# docker-compose.http.yml — HTTP-only deployment (no TLS)
+#
+# Use this instead of docker-compose.yml when TLS is not required.
+#
+# Two modes are supported — choose one:
+#
+#   Mode A: Nginx reverse proxy over plain HTTP (recommended)
+#     Keeps upload buffering, long-timeout proxy, and access logs.
+#     Clients connect on port 80.
+#
+#       docker compose -f docker-compose.http.yml up -d
+#
+#   Mode B: Gunicorn direct (no Nginx)
+#     Simplest possible setup. Use when you don't need a proxy layer.
+#     Comment out the nginx service below and expose scanner port 8080.
+#
+# WARNING: traffic is unencrypted. Only use on isolated internal networks.
+
+services:
+
+  # ── Application (Gunicorn + Flask) ────────────────────────────────────────
+  scanner:
+    image: repo-scanner:latest
+    restart: unless-stopped
+
+    environment:
+      LOG_TARGET: stdout
+      LOG_LEVEL:  info
+
+    volumes:
+      - ./feedback:/feedback
+
+    tmpfs:
+      - /tmp:size=2g,mode=1777
+
+    mem_limit: 2g
+    cpus: "2"
+
+    # ── Mode B: uncomment these two lines and remove the nginx service ──────
+    # ports:
+    #   - "8080:8080"
+
+    networks:
+      - internal
+
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"
+      interval: 30s
+      timeout:  5s
+      retries:  3
+      start_period: 15s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ── Nginx (HTTP reverse proxy, no TLS) ────────────────────────────────────
+  # Remove this service entirely if using Mode B above.
+  nginx:
+    image: nginx:stable-alpine
+    restart: unless-stopped
+
+    ports:
+      - "80:80"
+
+    volumes:
+      - ./nginx-http.conf:/etc/nginx/nginx.conf:ro
+      # No certs volume needed
+
+    depends_on:
+      - scanner
+
+    networks:
+      - internal
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  internal:
+    driver: bridge
