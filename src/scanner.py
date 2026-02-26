@@ -250,6 +250,61 @@ class ProhibitedWordScanner:
                 pass  # Different drives on Windows
         return False
 
+    def _check_filename(self, filepath: str) -> List[Dict]:
+        """Check if the filename itself contains prohibited words/patterns."""
+        results = []
+        filename = os.path.basename(filepath)
+
+        for entry in self._compiled_patterns:
+            display = entry['display']
+
+            if entry['type'] == 'word':
+                exact_positions: Set[int] = set()
+                for match in re.finditer(entry['pattern_exact'], filename):
+                    exact_positions.add(match.start())
+                    results.append({
+                        'file':            filepath,
+                        'line_number':     0,
+                        'line_content':    f'[filename: {filename}]',
+                        'prohibited_word': display,
+                        'position':        match.start(),
+                        'match_type':      'exact',
+                    })
+                for match in re.finditer(entry['pattern_partial'], filename):
+                    if match.start() not in exact_positions:
+                        results.append({
+                            'file':            filepath,
+                            'line_number':     0,
+                            'line_content':    f'[filename: {filename}]',
+                            'prohibited_word': display,
+                            'position':        match.start(),
+                            'match_type':      'partial',
+                        })
+
+            elif entry['type'] == 'literal':
+                for match in re.finditer(entry['pattern'], filename):
+                    results.append({
+                        'file':            filepath,
+                        'line_number':     0,
+                        'line_content':    f'[filename: {filename}]',
+                        'prohibited_word': display,
+                        'position':        match.start(),
+                        'match_type':      'partial',
+                    })
+
+            elif entry['type'] == 'regex':
+                for match in re.finditer(entry['pattern'], filename):
+                    results.append({
+                        'file':            filepath,
+                        'line_number':     0,
+                        'line_content':    f'[filename: {filename}]',
+                        'prohibited_word': display,
+                        'position':        match.start(),
+                        'match_type':      'exact',
+                    })
+
+        return results
+
     def _search_in_file(self, filepath: str) -> List[Dict]:
         """Search for prohibited words/patterns in a single file.
 
@@ -388,7 +443,8 @@ class ProhibitedWordScanner:
                 else:
                     if on_progress is not None:
                         on_progress(files_scanned, path)
-                    results = self._search_in_file(path)
+                    results = self._check_filename(path)
+                    results.extend(self._search_in_file(path))
                     files_scanned += 1
                     all_results.extend(results)
 
@@ -442,7 +498,10 @@ class ProhibitedWordScanner:
                 output.append(f"  Violations: {len(violations)}")
                 output.append("  " + "-" * 60)
                 for v in violations:
-                    output.append(f"    Line {v['line_number']}: Found '{v['prohibited_word']}'")
+                    if v['line_number'] == 0:
+                        output.append(f"    Filename: Found '{v['prohibited_word']}'")
+                    else:
+                        output.append(f"    Line {v['line_number']}: Found '{v['prohibited_word']}'")
                     output.append(f"      {v['line_content']}")
                     output.append("")
 

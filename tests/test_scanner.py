@@ -567,6 +567,51 @@ class TestDirectoryScanning(ScannerTestCase):
         for d in saved_temps:
             self.assertFalse(os.path.exists(d), f"Temp dir leaked: {d}")
 
+    # ------------------------------------------------------------------
+    # Filename checking
+    # ------------------------------------------------------------------
+
+    def test_filename_exact_match_detected(self):
+        # "password" at a word boundary in the filename
+        self.write_text('password.txt', 'clean content\n')
+        results = self.scan()
+        filename_hits = [r for r in results if r['line_number'] == 0]
+        self.assertTrue(any(r['prohibited_word'] == 'password' for r in filename_hits))
+
+    def test_filename_partial_match_detected(self):
+        # "password" embedded inside a longer name → partial hit
+        self.write_text('my_password_backup.txt', 'clean content\n')
+        results = self.scan()
+        filename_hits = [r for r in results if r['line_number'] == 0]
+        self.assertTrue(len(filename_hits) > 0)
+
+    def test_filename_no_false_positive_on_clean_name(self):
+        self.write_text('readme.txt', 'clean content\n')
+        results = self.scan()
+        filename_hits = [r for r in results if r['line_number'] == 0]
+        self.assertEqual(filename_hits, [])
+
+    def test_filename_line_content_identifies_filename(self):
+        self.write_text('password.txt', 'clean content\n')
+        results = self.scan()
+        filename_hits = [r for r in results if r['line_number'] == 0]
+        self.assertTrue(all('filename' in r['line_content'] for r in filename_hits))
+
+    def test_filename_and_content_both_reported(self):
+        # Both the filename and file content contain a prohibited word
+        self.write_text('password.txt', 'password = "x"\n')
+        results = self.scan()
+        self.assertTrue(any(r['line_number'] == 0 for r in results))
+        self.assertTrue(any(r['line_number'] > 0 for r in results))
+
+    def test_format_results_shows_filename_label(self):
+        self.write_text('password.txt', 'clean content\n')
+        scanner = self.make_scanner()
+        results = scanner.scan_directory(self.scan_dir)
+        scanner.cleanup()
+        output = scanner.format_results(results)
+        self.assertIn('Filename:', output)
+
     def test_format_results_no_violations(self):
         scanner = self.make_scanner()
         output = scanner.format_results([])
@@ -828,7 +873,8 @@ class TestRegexAndLiteralPatterns(ScannerTestCase):
             'regex:[A-Z]{4}\n',
             'AAAA BBBB CCCC\n',
         )
-        self.assertEqual(len(results), 3)
+        content_hits = [r for r in results if r['line_number'] > 0]
+        self.assertEqual(len(content_hits), 3)
 
     # ── Literal (quoted) matching ──────────────────────────────────────────────
 
