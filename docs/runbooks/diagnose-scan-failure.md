@@ -173,7 +173,7 @@ curl https://scanner.corp.example.com/health
 ```
 
 - If the first works but the second doesn't → Nginx issue (check Nginx logs)
-- If neither works → scanner container is down (see `runbooks/restart-service.md`)
+- If neither works → scanner container is down (see `docs/runbooks/restart-service.md`)
 
 ```bash
 docker compose -f /opt/repo-scanner/docker-compose.yml logs nginx

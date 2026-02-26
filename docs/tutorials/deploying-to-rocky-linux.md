@@ -224,7 +224,7 @@ inside the Docker network.
 
 For day-to-day operations after the initial deployment, refer to the runbooks:
 
-- **Upgrading** — `runbooks/upgrade.md`
-- **Renewing TLS certificates** — `runbooks/renew-certificates.md`
-- **Restarting the service** — `runbooks/restart-service.md`
-- **Diagnosing scan failures** — `runbooks/diagnose-scan-failure.md`
+- **Upgrading** — `docs/runbooks/upgrade.md`
+- **Renewing TLS certificates** — `docs/runbooks/renew-certificates.md`
+- **Restarting the service** — `docs/runbooks/restart-service.md`
+- **Diagnosing scan failures** — `docs/runbooks/diagnose-scan-failure.md`

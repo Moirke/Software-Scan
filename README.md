@@ -253,7 +253,7 @@ The web interface displays:
 
 ### Integrating with CI/CD
 
-See [runbooks/ci-cd-integration.md](runbooks/ci-cd-integration.md) for ready-to-use
+See [docs/runbooks/ci-cd-integration.md](docs/runbooks/ci-cd-integration.md) for ready-to-use
 Jenkinsfile examples (basic, Docker agent, parameterized warn/fail, and shared library).
 
 Quick bash reference for non-Jenkins pipelines:
@@ -313,22 +313,22 @@ Check firewall settings and ensure port 5000 is open.
 
 | Guide | Description |
 |---|---|
-| [Your first scan](tutorials/your-first-scan.md) | Walk through the web UI end to end |
-| [Scanning with the REST API](tutorials/scanning-with-the-rest-api.md) | `curl` examples for all v1 endpoints |
-| [Running with Gunicorn](tutorials/running-with-gunicorn.md) | Production-like local setup |
-| [Deploying to Rocky Linux](tutorials/deploying-to-rocky-linux.md) | Full on-premise VM deployment with Docker + Nginx + TLS |
-| [Setting up the Jenkins pipeline](tutorials/setting-up-the-jenkins-pipeline.md) | Create the build job that produces the Docker image artifact |
+| [Your first scan](docs/tutorials/your-first-scan.md) | Walk through the web UI end to end |
+| [Scanning with the REST API](docs/tutorials/scanning-with-the-rest-api.md) | `curl` examples for all v1 endpoints |
+| [Running with Gunicorn](docs/tutorials/running-with-gunicorn.md) | Production-like local setup |
+| [Deploying to Rocky Linux](docs/tutorials/deploying-to-rocky-linux.md) | Full on-premise VM deployment with Docker + Nginx + TLS |
+| [Setting up the Jenkins pipeline](docs/tutorials/setting-up-the-jenkins-pipeline.md) | Create the build job that produces the Docker image artifact |
 
 ### Runbooks (day-to-day operations)
 
 | Runbook | When to use it |
 |---|---|
-| [Upgrade](runbooks/upgrade.md) | Deploy a new build artifact to the VM |
-| [Renew certificates](runbooks/renew-certificates.md) | Annual TLS cert renewal |
-| [Restart service](runbooks/restart-service.md) | Service unresponsive or config changed |
-| [Diagnose scan failure](runbooks/diagnose-scan-failure.md) | Scan errors, hangs, or unexpected results |
-| [CI/CD integration](runbooks/ci-cd-integration.md) | Add a scan step to Jenkins or other CI pipelines |
-| [HTTP-only deployment](runbooks/http-only-deployment.md) | Deploy without TLS on isolated internal networks |
+| [Upgrade](docs/runbooks/upgrade.md) | Deploy a new build artifact to the VM |
+| [Renew certificates](docs/runbooks/renew-certificates.md) | Annual TLS cert renewal |
+| [Restart service](docs/runbooks/restart-service.md) | Service unresponsive or config changed |
+| [Diagnose scan failure](docs/runbooks/diagnose-scan-failure.md) | Scan errors, hangs, or unexpected results |
+| [CI/CD integration](docs/runbooks/ci-cd-integration.md) | Add a scan step to Jenkins or other CI pipelines |
+| [HTTP-only deployment](docs/runbooks/http-only-deployment.md) | Deploy without TLS on isolated internal networks |
 
 ## License
 

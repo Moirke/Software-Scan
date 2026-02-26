@@ -82,4 +82,4 @@ every caller — browsers, CI agents, curl clients.
 3. Copy new `server.crt` and `server.key` to the VM
 4. Reload Nginx
 5. Distribute the new `ca.crt` to all callers following the instructions in
-   `tutorials/deploying-to-rocky-linux.md` (Step 4)
+   `docs/tutorials/deploying-to-rocky-linux.md` (Step 4)

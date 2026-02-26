@@ -122,8 +122,9 @@ Open the build's **Console Output** to follow along.  The stages run in order:
 
 | Stage | What happens |
 |-------|-------------|
-| **Install dependencies** | `pip install -r requirements.txt` — installs Flask, coverage, etc. |
-| **Test** | `coverage run -m unittest discover tests/` — runs all tests; coverage HTML is generated and published win regardless of pass/fail |
+| **Install dependencies** | `pip install -r requirements.txt` — installs Flask, coverage, pylint, etc. |
+| **Lint** | `pylint src/` — fails the build if the score drops below 10.00 |
+| **Test** | `coverage run -m unittest discover tests/` — runs all tests; coverage HTML is generated and published regardless of pass/fail |
 | **Build image** | `docker build` — builds `repo-scanner:<N>` and `repo-scanner:latest`, labels the image with the git SHA and build timestamp |
 | **Smoke test** | Starts the container on port 18080, waits 5 seconds, hits `/health`, then stops the container |
 | **Save artifact** | `docker save | gzip` — compresses the image to `repo-scanner-<N>.tar.gz` and archives it |

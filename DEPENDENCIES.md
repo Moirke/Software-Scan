@@ -21,7 +21,8 @@ Complete list of all dependencies across the project — runtime, system, infras
 | requests | 2.31.0 | Artifactory HTTP downloads |
 | gunicorn | 21.2.0 | Production WSGI server |
 | fpdf2 | 2.7.9 | PDF report generation (pure Python, no system deps) |
-| coverage | 7.13.4 | Test coverage measurement; used by `ci/Jenkinsfile` and locally |
+| coverage | 7.10.7 | Test coverage measurement; used by `ci/Jenkinsfile` and locally |
+| pylint | 3.3.9 | Static analysis / linter; run with `pylint src/` as part of CI quality checks |
 
 All other modules used (`os`, `re`, `zipfile`, `tarfile`, `subprocess`, `ipaddress`, `socket`, `tempfile`, `shutil`, `json`, `base64`, `io`, `pathlib`, `queue`, `threading`, `multiprocessing`) are Python standard library — no installation required.
 

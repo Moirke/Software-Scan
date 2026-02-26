@@ -1,7 +1,7 @@
 # Runbook: Restarting the Service
 
 Most of the time you do not need to restart anything — upgrades are handled
-by `docker compose up -d` (see `runbooks/upgrade.md`).  Use this runbook
+by `docker compose up -d` (see `docs/runbooks/upgrade.md`).  Use this runbook
 when the service is unresponsive, a container has exited unexpectedly, or you
 need to apply a configuration change.
 
