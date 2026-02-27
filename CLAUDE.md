@@ -70,3 +70,10 @@ This is a repository scanner that detects prohibited words (credentials, dev mar
 **Tests** use `unittest` and live in `tests/` with fixtures in `tests/fixtures/`.
 
 **CI/CD:** Four Jenkinsfile variants are in `ci/` (basic, Docker-based, parameterized, shared library).
+
+**Documentation layout:**
+- `docs/QUICKSTART.md` — quick-reference for install, CLI/web usage, config, and exit codes
+- `docs/LOGGING.md` — logging strategy and structured event reference
+- `docs/runbooks/` — operational guides (upgrade, restart, cert renewal, scan failure diagnosis, CI/CD integration, HTTP-only deployment)
+- `docs/tutorials/` — step-by-step walkthroughs (first scan, REST API, Gunicorn, Rocky Linux deployment, Jenkins pipeline setup)
+- `examples/` — runnable demo script and sample repo used by the demo
